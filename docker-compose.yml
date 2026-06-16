@@ -1,0 +1,49 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: re-rtc-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-re_rtc}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-re_rtc_secret}
+      POSTGRES_DB: ${POSTGRES_DB:-re_rtc}
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-re_rtc} -d ${POSTGRES_DB:-re_rtc}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: re-rtc-optimizer:latest
+    container_name: re-rtc-app
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    ports:
+      - "${PORT:-8000}:8000"
+    environment:
+      - PORT=8000
+      - WEB_CONCURRENCY=${WEB_CONCURRENCY:-2}
+      - ALLOWED_ORIGINS=${ALLOWED_ORIGINS:-*}
+      - DATABASE_URL=postgresql+psycopg://${POSTGRES_USER:-re_rtc}:${POSTGRES_PASSWORD:-re_rtc_secret}@postgres:5432/${POSTGRES_DB:-re_rtc}
+    volumes:
+      - ./data:/app/data:ro
+      - ./assets:/app/assets:ro
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/api/health')"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
+
+volumes:
+  postgres_data:

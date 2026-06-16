@@ -1,0 +1,92 @@
+import { Zap, CheckCircle2, BatteryCharging, TrendingUp, Activity } from 'lucide-react';
+import { useOptimizer } from '../../context/OptimizerContext';
+
+export default function KPICards() {
+  const { summary, blocks } = useOptimizer();
+  if (!summary) return null;
+
+  // Total net delivered: from backend field (new) or computed from blocks (fallback)
+  const totalDelivered = summary.total_net_delivered_mwh
+    ?? blocks.reduce((s, b) => s + b.net_schedule * 0.25, 0);
+
+  // Daily RTC target in MWh (96 blocks × 0.25h × commitment MW)
+  const rtcTargetMwh = summary.rtc_commitment_mw * 96 * 0.25;
+  const deliveryPct = rtcTargetMwh > 0 ? (totalDelivered / rtcTargetMwh) * 100 : 0;
+
+  return (
+    <section className="kpi-grid">
+
+      {/* ── Total Delivered to Consumer ── */}
+      <div className="glass-panel kpi-card" style={{ '--accent-color': '#10b981' } as React.CSSProperties}>
+        <div className="kpi-header">
+          <span>Delivered to Consumer</span>
+          <Activity size={16} style={{ color: '#10b981' }} />
+        </div>
+        <div className="kpi-value" style={{ color: '#34d399' }}>
+          <span>{totalDelivered.toFixed(1)}</span>
+          <span className="kpi-unit">MWh</span>
+        </div>
+        <span className="kpi-subtitle">
+          {deliveryPct.toFixed(1)}% of RTC target ({rtcTargetMwh.toFixed(0)} MWh/day)
+        </span>
+      </div>
+
+      <div className="glass-panel kpi-card" style={{ '--accent-color': 'var(--color-wind)' } as React.CSSProperties}>
+        <div className="kpi-header">
+          <span>RTC Commitment Target</span>
+          <Zap size={16} style={{ color: 'var(--color-wind)' }} />
+        </div>
+        <div className="kpi-value">
+          <span>{summary.rtc_commitment_mw.toFixed(1)}</span>
+          <span className="kpi-unit">MW</span>
+        </div>
+        <span className="kpi-subtitle">Compliance threshold: {(summary.rtc_commitment_mw * 0.50).toFixed(1)} MW (50%)</span>
+      </div>
+
+      <div className="glass-panel kpi-card" style={{ '--accent-color': 'var(--color-target)' } as React.CSSProperties}>
+        <div className="kpi-header">
+          <span>Compliant Intervals</span>
+          <CheckCircle2 size={16} style={{ color: 'var(--color-target)' }} />
+        </div>
+        <div className="kpi-value">
+          <span>{summary.compliant_blocks}</span>
+          <span className="kpi-unit">/ 96</span>
+        </div>
+        {summary.fully_compliant ? (
+          <span className="kpi-subtitle">100% daily availability met</span>
+        ) : (
+          <span className="kpi-subtitle">
+            {96 - summary.compliant_blocks} blocks with shortfalls
+            {summary.shortfall_energy_mwh != null && summary.shortfall_energy_mwh > 0 && (
+              <> &nbsp;·&nbsp; <span style={{ color: '#f87171', fontWeight: '600' }}>−{summary.shortfall_energy_mwh.toFixed(2)} MWh</span> deficit</>
+            )}
+          </span>
+        )}
+      </div>
+
+      <div className="glass-panel kpi-card" style={{ '--accent-color': 'var(--color-psp-discharge)' } as React.CSSProperties}>
+        <div className="kpi-header">
+          <span>PSP Cycles Dispatched</span>
+          <BatteryCharging size={16} style={{ color: 'var(--color-psp-discharge)' }} />
+        </div>
+        <div className="kpi-value">
+          <span>{summary.cycles_used.toFixed(2)}</span>
+          <span className="kpi-unit">/ 2.0</span>
+        </div>
+        <span className="kpi-subtitle">Charged: {summary.total_charged_mwh.toFixed(1)} MWh (usable: {(summary.psp_usable_charged_mwh ?? summary.total_charged_mwh * 0.8).toFixed(1)} MWh) | EOD SoC: {summary.end_soc_mwh.toFixed(1)} MWh</span>
+      </div>
+
+      <div className="glass-panel kpi-card" style={{ '--accent-color': 'var(--color-rtm)' } as React.CSSProperties}>
+        <div className="kpi-header">
+          <span>RTM Market Surplus</span>
+          <TrendingUp size={16} style={{ color: 'var(--color-rtm)' }} />
+        </div>
+        <div className="kpi-value" style={{ color: '#e2e8f0' }}>
+          <span>{summary.total_rtm_surplus_mwh.toFixed(1)}</span>
+          <span className="kpi-unit">MWh</span>
+        </div>
+        <span className="kpi-subtitle">Exportable generation above 100% PPA commitment</span>
+      </div>
+    </section>
+  );
+}
