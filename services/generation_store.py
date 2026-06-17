@@ -16,7 +16,6 @@ from sqlalchemy.orm import Session
 
 from db.models import GenerationInput
 from services.constants import CONTRACT_END_DATE, CONTRACT_START_DATE, JULY_START_DATE
-from services.forecast import compute_scaled_solar_mw
 
 BLOCK_TIMES = [
     f"{h:02d}:{m:02d}:00"
@@ -25,6 +24,15 @@ BLOCK_TIMES = [
 ]
 
 DEFAULT_SOLAR_AC_MW = 60.0
+
+
+def _apply_upload_wind_speed_correction(speed: float) -> float:
+    """One-time wind speed correction applied during CSV upload only (not at read/calc time)."""
+    if speed <= 3.0:
+        return speed
+    if speed <= 11.0:
+        return round(speed * 0.82, 4)
+    return round(speed * 0.96, 4)
 
 
 def _parse_iso_date(value: str) -> date:
@@ -170,15 +178,15 @@ def parse_june_reference_csv(text: str, solar_ac_mw: float = DEFAULT_SOLAR_AC_MW
             continue
 
         projected_speed = 0.8 * ws2025 + 0.2 * ws2024
-        base_solar = max(solar_2024, solar_2025, 0.0)
-        solar_mw = compute_scaled_solar_mw(base_solar, solar_ac_mw)
+        wind_speed = _apply_upload_wind_speed_correction(projected_speed)
+        solar_mw = max(solar_2024, solar_2025, 0.0)
 
         parsed.append({
             "date": row_date,
             "block": block,
             "time": BLOCK_TIMES[block - 1],
-            "wind_speed": round(projected_speed, 4),
-            "solar_mw": round(max(solar_mw, 0.0), 4),
+            "wind_speed": round(wind_speed, 4),
+            "solar_mw": round(solar_mw, 4),
         })
 
     return parsed
@@ -245,12 +253,14 @@ def parse_generation_csv(text: str, solar_ac_mw: float = DEFAULT_SOLAR_AC_MW) ->
         if wind_val is None and solar_val is None:
             continue
 
+        wind_speed = _apply_upload_wind_speed_correction(wind_val) if wind_val is not None else 0.0
+
         parsed.append({
             "date": row_date,
             "block": block,
             "time": BLOCK_TIMES[block - 1],
-            "wind_speed": wind_val if wind_val is not None else 0.0,
-            "solar_mw": min(solar_val, solar_ac_mw) if solar_val is not None else 0.0,
+            "wind_speed": wind_speed,
+            "solar_mw": max(solar_val, 0.0) if solar_val is not None else 0.0,
         })
 
     return parsed
@@ -269,6 +279,38 @@ def import_reference_csv_file(
     if not rows:
         raise HTTPException(status_code=400, detail="No valid rows found in reference file")
     return upsert_generation_rows(db, rows)
+
+
+def patch_generation_blocks(
+    db: Session,
+    for_date: str,
+    rows: list,
+    solar_ac_mw: float = DEFAULT_SOLAR_AC_MW,
+) -> dict[str, int]:
+    """Upsert one or more blocks for a date (used by inline cell edits on Generation Input)."""
+    validate_contract_date(for_date)
+    if not rows:
+        return {"rows_upserted": 0, "dates_updated": 0}
+
+    payload: list[dict[str, Any]] = []
+    for row in rows:
+        block = int(row.block if hasattr(row, "block") else row["block"])
+        if block < 1 or block > 96:
+            continue
+        wind_speed = float(row.wind_speed if hasattr(row, "wind_speed") else row["wind_speed"])
+        solar_raw = float(row.solar_mw if hasattr(row, "solar_mw") else row["solar_mw"])
+        payload.append({
+            "date": for_date,
+            "block": block,
+            "time": BLOCK_TIMES[block - 1],
+            "wind_speed": max(wind_speed, 0.0),
+            "solar_mw": min(max(solar_raw, 0.0), solar_ac_mw),
+        })
+
+    if not payload:
+        return {"rows_upserted": 0, "dates_updated": 0}
+
+    return upsert_generation_rows(db, payload)
 
 
 def upsert_generation_rows(db: Session, rows: list[dict[str, Any]], default_date: str | None = None) -> dict[str, int]:

@@ -1399,6 +1399,9 @@ table.schedule-table {
 .generation-readonly-value--wind {
   color: var(--color-wind);
   font-weight: 600;
+  pointer-events: none;
+  cursor: default;
+  user-select: text;
 }
 
 .generation-readonly-value--solar {

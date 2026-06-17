@@ -3,6 +3,7 @@ from fastapi.responses import PlainTextResponse
 from sqlalchemy.orm import Session
 
 from db.database import get_db
+from models.schemas import GenerationPatchRequest
 from services.forecast import generate_forecast
 from services.generation_store import (
     build_template_csv,
@@ -12,6 +13,7 @@ from services.generation_store import (
     get_generation_range,
     import_reference_csv_file,
     parse_generation_csv,
+    patch_generation_blocks,
     upsert_generation_rows,
     validate_contract_date,
 )
@@ -116,6 +118,18 @@ def reset_generation_data(db: Session = Depends(get_db)):
     """Clear July generation uploads only; June data in PostgreSQL is kept."""
     deleted = clear_july_generation_data(db)
     return {"status": "ok", "rows_deleted": deleted, "scope": "july"}
+
+
+@router.patch("/generation/db/{date}")
+def patch_generation_for_date(
+    date: str,
+    body: GenerationPatchRequest,
+    solar_ac_mw: float = Query(60.0, ge=5.0, le=175.0, description="Solar AC MW cap for stored solar_mw"),
+    db: Session = Depends(get_db),
+):
+    """Persist inline edits from the Generation Input table (wind speed + solar MW per block)."""
+    result = patch_generation_blocks(db, date, body.rows, solar_ac_mw=solar_ac_mw)
+    return {"status": "ok", **result}
 
 
 @router.get("/generation/db/{date}")

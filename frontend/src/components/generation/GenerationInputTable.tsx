@@ -13,6 +13,7 @@ import {
   dbRowsToGenEdits,
   downloadGenerationTemplate,
   fetchGenerationFromDb,
+  patchGenerationBlocks,
   uploadGenerationCsv,
   type GenerationDbRow,
 } from '../../utils/generationDbApi';
@@ -91,6 +92,15 @@ export default function GenerationInputTable() {
   const [loading, setLoading] = useState(false);
   const [hasUploadForDate, setHasUploadForDate] = useState(false);
   const [displayRows, setDisplayRows] = useState<DisplayRow[]>([]);
+  const [saving, setSaving] = useState(false);
+
+  const pageEditsRef = useRef(pageEdits);
+  const displayRowsRef = useRef(displayRows);
+  const pendingSavesRef = useRef<Set<number>>(new Set());
+  const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  useEffect(() => { pageEditsRef.current = pageEdits; }, [pageEdits]);
+  useEffect(() => { displayRowsRef.current = displayRows; }, [displayRows]);
 
   const modifiedCount = Object.keys(pageEdits).length;
   const datesInRange = getDatesInRange(fromDate, toDate);
@@ -114,17 +124,6 @@ export default function GenerationInputTable() {
     syncEditsToOptimizer(edits);
   }, [syncEditsToOptimizer]);
 
-  const updateBlockEdit = useCallback((block: number, patch: Partial<GenEdit>) => {
-    setPageEdits((prev) => {
-      const next = {
-        ...prev,
-        [block]: { ...(prev[block] ?? {}), ...patch },
-      };
-      syncEditsToOptimizer(next);
-      return next;
-    });
-  }, [syncEditsToOptimizer]);
-
   const buildDisplayRows = useCallback((rows: GenerationDbRow[], edits: Record<number, GenEdit>): DisplayRow[] => {
     return rows.map((row) => {
       const seg = curtailmentEnabled
@@ -139,6 +138,72 @@ export default function GenerationInputTable() {
       return { ...row, curtail_flag, wind_mw_raw };
     });
   }, [curtailmentEnabled, curtailmentSegments, wtgCount]);
+
+  const getBlockPersistValues = useCallback((block: number): { wind_speed: number; solar_mw: number } | null => {
+    const row = displayRowsRef.current.find((r) => r.block === block);
+    if (!row) return null;
+    const edit = pageEditsRef.current[block] ?? {};
+    const windStr = edit.wind_speed !== undefined ? edit.wind_speed : String(row.wind_speed);
+    const solarStr = edit.solar_mw !== undefined ? edit.solar_mw : String(row.solar_mw);
+    const wind_speed = parseFloat(windStr);
+    const solar_mw = parseFloat(solarStr);
+    if (isNaN(wind_speed) || isNaN(solar_mw)) return null;
+    return { wind_speed, solar_mw };
+  }, []);
+
+  const flushSavesRef = useRef<() => Promise<void>>(async () => {});
+
+  const flushSaves = useCallback(async () => {
+    const blocks = Array.from(pendingSavesRef.current);
+    pendingSavesRef.current.clear();
+    if (blocks.length === 0) return;
+
+    const rows = blocks
+      .map((block) => {
+        const values = getBlockPersistValues(block);
+        return values ? { block, ...values } : null;
+      })
+      .filter((r): r is { block: number; wind_speed: number; solar_mw: number } => r !== null);
+
+    if (rows.length === 0) return;
+
+    setSaving(true);
+    try {
+      await patchGenerationBlocks(fromDate, rows, solarAc);
+      setHasUploadForDate(true);
+      await refreshGenerationEdits();
+      const response = await fetchGenerationFromDb(fromDate);
+      const edits = response.has_upload ? dbRowsToGenEdits(response.rows) : {};
+      setPageEdits(edits);
+      syncEditsToOptimizer(edits);
+      setDisplayRows(buildDisplayRows(response.rows, edits));
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'Failed to save changes.';
+      setUploadMessage({ type: 'error', text: message });
+    } finally {
+      setSaving(false);
+    }
+  }, [fromDate, solarAc, refreshGenerationEdits, getBlockPersistValues, buildDisplayRows, syncEditsToOptimizer]);
+
+  useEffect(() => { flushSavesRef.current = flushSaves; }, [flushSaves]);
+
+  const updateBlockEdit = useCallback((block: number, patch: Partial<GenEdit>) => {
+    setPageEdits((prev) => {
+      const next = {
+        ...prev,
+        [block]: { ...(prev[block] ?? {}), ...patch },
+      };
+      syncEditsToOptimizer(next);
+      return next;
+    });
+    pendingSavesRef.current.add(block);
+    if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
+    saveTimerRef.current = setTimeout(() => { void flushSavesRef.current(); }, 400);
+  }, [syncEditsToOptimizer]);
+
+  useEffect(() => () => {
+    if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
+  }, []);
 
   // Load generation data from PostgreSQL (isolated from single/multi-day analysis)
   useEffect(() => {
@@ -248,6 +313,7 @@ export default function GenerationInputTable() {
     if (lines.length === 0) return;
 
     const newEdits = { ...pageEdits };
+    const affectedBlocks: number[] = [];
     lines.forEach((line, i) => {
       const cells = line.includes('\t') ? line.split('\t') : line.split(',');
       const block = parseInt(cells[0], 10) || startBlock + i;
@@ -259,9 +325,13 @@ export default function GenerationInputTable() {
         ...(wind ? { wind_speed: wind } : {}),
         ...(solar ? { solar_mw: solar } : {}),
       };
+      affectedBlocks.push(block);
     });
     setPageEdits(newEdits);
     syncEditsToOptimizer(newEdits);
+    affectedBlocks.forEach((b) => pendingSavesRef.current.add(b));
+    if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
+    saveTimerRef.current = setTimeout(() => { void flushSavesRef.current(); }, 400);
   };
 
   const handleFilterDateChange = (field: 'from' | 'to', value: string) => {
@@ -293,9 +363,14 @@ export default function GenerationInputTable() {
               &nbsp;·&nbsp;{datesInRange.length} day{datesInRange.length !== 1 ? 's' : ''}
               &nbsp;·&nbsp;{datesInRange.length * 96} blocks
             </span>
-            {loading && (
+            {loading && !saving && (
               <span className="generation-badge generation-badge--modified" style={{ color: '#94a3b8' }}>
                 Loading from database…
+              </span>
+            )}
+            {saving && (
+              <span className="generation-badge generation-badge--modified" style={{ color: '#60a5fa' }}>
+                Saving to database…
               </span>
             )}
             {!loading && !hasUploadForDate && (
@@ -402,7 +477,8 @@ export default function GenerationInputTable() {
         <span>Upload columns: <strong>date</strong>, <strong>block</strong>, <strong>wind_speed</strong>, <strong>solar_mw</strong></span>
         <span>Contract window: {CONTRACT_START_DATE} to {CONTRACT_END_DATE}</span>
         <span>Template downloads data for the selected filter range (uploaded values or zeros)</span>
-        <span>Filter is remembered when you switch tabs</span>
+        <span>Wind Gen (MW) is calculated from wind speed — not directly editable</span>
+        <span>Cell edits auto-save to PostgreSQL</span>
       </div>
 
       <div className="table-container gen-input-table" ref={genTableRef} key={fromDate}>
@@ -472,7 +548,12 @@ export default function GenerationInputTable() {
                     {isCurtailed ? (
                       <span className="generation-readonly-value generation-readonly-value--wind">0.000</span>
                     ) : (
-                      <div className={`generation-readonly-value ${edit.wind_speed !== undefined ? 'generation-readonly-value--active' : ''}`}>
+                      <div
+                        className={`generation-readonly-value generation-readonly-value--wind ${edit.wind_speed !== undefined ? 'generation-readonly-value--active' : ''}`}
+                        aria-readonly="true"
+                        tabIndex={-1}
+                        title="Calculated from wind speed (read-only)"
+                      >
                         {effWindMW.toFixed(3)}
                       </div>
                     )}

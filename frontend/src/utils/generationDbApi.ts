@@ -97,6 +97,26 @@ export async function resetJulyGenerationDb(): Promise<{ rows_deleted: number }>
   return res.json();
 }
 
+export async function patchGenerationBlocks(
+  date: string,
+  rows: Array<{ block: number; wind_speed: number; solar_mw: number }>,
+  solarAcMw: number,
+): Promise<{ rows_upserted: number; dates_updated: number }> {
+  const res = await fetch(
+    `${BASE_URL}/api/generation/db/${encodeURIComponent(date)}?solar_ac_mw=${solarAcMw}`,
+    {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ rows }),
+    },
+  );
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(typeof err.detail === 'string' ? err.detail : 'Failed to save generation data');
+  }
+  return res.json();
+}
+
 export function dbRowsToGenEdits(rows: GenerationDbRow[]): Record<number, GenEdit> {
   const edits: Record<number, GenEdit> = {};
   rows.forEach((row) => {

@@ -273,3 +273,15 @@ class MultiDayMaxRTCResponse(BaseModel):
     period_start: str
     period_end: str
 
+
+# ── Generation input patch (cell edits) ─────────────────────────────────────
+
+class GenerationBlockUpdate(BaseModel):
+    block: int = Field(..., ge=1, le=96)
+    wind_speed: float = Field(..., ge=0.0, le=25.0)
+    solar_mw: float = Field(..., ge=0.0)
+
+
+class GenerationPatchRequest(BaseModel):
+    rows: List[GenerationBlockUpdate] = Field(..., min_length=1)
+
