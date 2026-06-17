@@ -64,13 +64,13 @@ export default function LoginPage() {
 
         <form className="login-form" onSubmit={handleSubmit}>
           <label className="login-field">
-            <span className="login-field__label">SYSTEM IDENTITY</span>
+            <span className="login-field__label">USER NAME</span>
             <div className="login-field__input-wrap">
               <User size={16} className="login-field__icon" />
               <input
                 type="text"
                 autoComplete="username"
-                placeholder="Username, Official Email, or Employee Code"
+                placeholder="User name"
                 value={username}
                 onChange={(e) => setUsername(e.target.value)}
               />

@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { Eye, EyeOff, ShieldCheck } from 'lucide-react';
+import { Eye, EyeOff, Lock, ShieldCheck, User } from 'lucide-react';
 import { Navigate, useLocation, useNavigate } from 'react-router-dom';
 import { useAdminAuth } from '../context/AdminAuthContext';
 import '../styles/admin.css';
@@ -54,24 +54,31 @@ export default function AdminLoginPage() {
         <div className="admin-login-card__badge">
           <ShieldCheck size={28} />
         </div>
-        <h1>Admin Access</h1>
-        <p>RE-RTC Administration Portal</p>
+
+        <div className="admin-login-card__heading">
+          <h1>Admin Access</h1>
+          <p>RE-RTC Administration Portal</p>
+        </div>
 
         <form onSubmit={handleSubmit} className="admin-login-form">
           <label className="admin-login-field">
-            <span>Admin Username</span>
-            <input
-              type="text"
-              autoComplete="username"
-              placeholder="Enter admin username"
-              value={username}
-              onChange={(e) => setUsername(e.target.value)}
-            />
+            <span className="admin-login-field__label">Admin Username</span>
+            <div className="admin-login-field__input-wrap">
+              <User size={16} className="admin-login-field__icon" />
+              <input
+                type="text"
+                autoComplete="username"
+                placeholder="Enter admin username"
+                value={username}
+                onChange={(e) => setUsername(e.target.value)}
+              />
+            </div>
           </label>
 
           <label className="admin-login-field">
-            <span>Admin Password</span>
-            <div className="admin-login-field__password">
+            <span className="admin-login-field__label">Admin Password</span>
+            <div className="admin-login-field__input-wrap">
+              <Lock size={16} className="admin-login-field__icon" />
               <input
                 type={showPassword ? 'text' : 'password'}
                 autoComplete="current-password"
