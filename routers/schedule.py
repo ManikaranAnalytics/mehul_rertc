@@ -6,7 +6,7 @@ from models.schemas import (
     RTCRangeRequest, RTCRangeResponse,
     MultiDayMaxRTCRequest, MultiDayMaxRTCResponse,
 )
-from services.forecast import generate_forecast
+from services.forecast import generate_forecast, apply_curtailment_to_dataframe, resolve_active_segments
 from services.psp_optimizer import optimize_psp_dispatch, find_max_rtc_no_shortfall, calculate_rtc_range, find_max_rtc_multiday
 
 router = APIRouter()
@@ -18,24 +18,35 @@ def health_check():
     return {"status": "ok"}
 
 
-def _apply_overrides(forecast_df: pd.DataFrame, overrides) -> pd.DataFrame:
-    """Apply per-block wind/solar overrides from the editable data tab."""
+def _apply_overrides(
+    forecast_df: pd.DataFrame,
+    overrides,
+    solar_ac_mw: float,
+    active_segments: list,
+) -> pd.DataFrame:
+    """
+    Apply per-block wind/solar overrides, then re-apply curtailment.
+
+    Overrides update the raw (pre-curtailment) profile. Curtailment segments are
+    enforced afterward so uploaded/edited values cannot bypass wind+solar curtailment.
+    Solar MW from overrides is capped at solar_ac_mw (Solar Net Capacity nameplate).
+    """
     if not overrides:
         return forecast_df
     df = forecast_df.copy()
     override_map = {int(o['block']): o for o in overrides}
     for idx, row in df.iterrows():
         b = int(row['block'])
-        if b in override_map:
-            ov = override_map[b]
-            # Preserve curtail_flag — overrides only touch the generation values
-            if 'wind_mw' in ov:
-                df.at[idx, 'wind_mw']     = float(ov['wind_mw'])
-                df.at[idx, 'wind_mw_raw'] = float(ov['wind_mw'])
-            if 'solar_mw' in ov:
-                df.at[idx, 'solar_mw']     = float(ov['solar_mw'])
-                df.at[idx, 'solar_mw_raw'] = float(ov['solar_mw'])
-    return df
+        if b not in override_map:
+            continue
+        ov = override_map[b]
+        if 'wind_mw' in ov:
+            wind_val = float(ov['wind_mw'])
+            df.at[idx, 'wind_mw_raw'] = wind_val
+        if 'solar_mw' in ov:
+            solar_val = min(float(ov['solar_mw']), solar_ac_mw)
+            df.at[idx, 'solar_mw_raw'] = solar_val
+    return apply_curtailment_to_dataframe(df, active_segments)
 
 
 def _psp_params(request) -> dict:
@@ -76,6 +87,12 @@ def get_optimal_schedule(request: ScheduleRequest):
     50% of RTC is the compliance floor (regulatory minimum delivery).
     """
     try:
+        active_segments = resolve_active_segments(
+            curtailment_enabled=request.curtailment_enabled,
+            curtailment_segments=_resolve_segments(request),
+            curtailment_start_block=request.curtailment_start_block,
+            curtailment_end_block=request.curtailment_end_block,
+        )
         forecast_df = generate_forecast(
             date_str=request.date,
             wtg_count=request.wtg_count,
@@ -86,8 +103,13 @@ def get_optimal_schedule(request: ScheduleRequest):
             curtailment_end_block=request.curtailment_end_block,
         )
 
-        # Apply any user-edited block overrides
-        forecast_df = _apply_overrides(forecast_df, request.block_overrides)
+        # Apply user-edited block overrides (raw profile), then re-apply curtailment
+        forecast_df = _apply_overrides(
+            forecast_df,
+            request.block_overrides,
+            request.solar_ac_mw,
+            active_segments,
+        )
 
         dispatch_results = optimize_psp_dispatch(
             forecast_df=forecast_df,
@@ -159,6 +181,12 @@ def get_rtc_range(request: RTCRangeRequest):
     Curtailment window (configurable) is excluded from the analysis.
     """
     try:
+        active_segments = resolve_active_segments(
+            curtailment_enabled=request.curtailment_enabled,
+            curtailment_segments=_resolve_segments(request),
+            curtailment_start_block=request.curtailment_start_block,
+            curtailment_end_block=request.curtailment_end_block,
+        )
         forecast_df = generate_forecast(
             date_str=request.date,
             wtg_count=request.wtg_count,
@@ -169,7 +197,12 @@ def get_rtc_range(request: RTCRangeRequest):
             curtailment_end_block=request.curtailment_end_block,
         )
 
-        forecast_df = _apply_overrides(forecast_df, request.block_overrides)
+        forecast_df = _apply_overrides(
+            forecast_df,
+            request.block_overrides,
+            request.solar_ac_mw,
+            active_segments,
+        )
 
         psp = _psp_params(request)
         result = calculate_rtc_range(

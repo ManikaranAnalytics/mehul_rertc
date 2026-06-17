@@ -16,6 +16,7 @@ from sqlalchemy.orm import Session
 
 from db.models import GenerationInput
 from services.constants import CONTRACT_END_DATE, CONTRACT_START_DATE, JULY_START_DATE
+from services.forecast import compute_scaled_solar_mw
 
 BLOCK_TIMES = [
     f"{h:02d}:{m:02d}:00"
@@ -170,7 +171,7 @@ def parse_june_reference_csv(text: str, solar_ac_mw: float = DEFAULT_SOLAR_AC_MW
 
         projected_speed = 0.8 * ws2025 + 0.2 * ws2024
         base_solar = max(solar_2024, solar_2025, 0.0)
-        solar_mw = base_solar * 0.9 * (solar_ac_mw / 175.0)
+        solar_mw = compute_scaled_solar_mw(base_solar, solar_ac_mw)
 
         parsed.append({
             "date": row_date,
@@ -249,7 +250,7 @@ def parse_generation_csv(text: str, solar_ac_mw: float = DEFAULT_SOLAR_AC_MW) ->
             "block": block,
             "time": BLOCK_TIMES[block - 1],
             "wind_speed": wind_val if wind_val is not None else 0.0,
-            "solar_mw": solar_val if solar_val is not None else 0.0,
+            "solar_mw": min(solar_val, solar_ac_mw) if solar_val is not None else 0.0,
         })
 
     return parsed

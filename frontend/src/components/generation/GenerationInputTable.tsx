@@ -69,7 +69,16 @@ interface DisplayRow extends GenerationDbRow {
 // ── Component ─────────────────────────────────────────────────────────────────
 
 export default function GenerationInputTable() {
-  const { wtgCount, solarAc, curtailmentEnabled, curtailmentSegments } = useOptimizer();
+  const {
+    wtgCount,
+    solarAc,
+    curtailmentEnabled,
+    curtailmentSegments,
+    selectedDate,
+    setSelectedDate,
+    setGenTableEdits,
+    refreshGenerationEdits,
+  } = useOptimizer();
 
   const [filter, setFilter] = useState<GenerationFilterState>(loadGenerationFilter);
   const { fromDate, toDate } = filter;
@@ -93,6 +102,28 @@ export default function GenerationInputTable() {
       return next;
     });
   }, []);
+
+  const syncEditsToOptimizer = useCallback((edits: Record<number, GenEdit>) => {
+    if (fromDate === selectedDate) {
+      setGenTableEdits(edits);
+    }
+  }, [fromDate, selectedDate, setGenTableEdits]);
+
+  const applyPageEdits = useCallback((edits: Record<number, GenEdit>) => {
+    setPageEdits(edits);
+    syncEditsToOptimizer(edits);
+  }, [syncEditsToOptimizer]);
+
+  const updateBlockEdit = useCallback((block: number, patch: Partial<GenEdit>) => {
+    setPageEdits((prev) => {
+      const next = {
+        ...prev,
+        [block]: { ...(prev[block] ?? {}), ...patch },
+      };
+      syncEditsToOptimizer(next);
+      return next;
+    });
+  }, [syncEditsToOptimizer]);
 
   const buildDisplayRows = useCallback((rows: GenerationDbRow[], edits: Record<number, GenEdit>): DisplayRow[] => {
     return rows.map((row) => {
@@ -161,8 +192,9 @@ export default function GenerationInputTable() {
       const response = await fetchGenerationFromDb(fromDate);
       setHasUploadForDate(response.has_upload);
       const edits = response.has_upload ? dbRowsToGenEdits(response.rows) : {};
-      setPageEdits(edits);
+      applyPageEdits(edits);
       setDisplayRows(buildDisplayRows(response.rows, edits));
+      await refreshGenerationEdits();
       setUploadMessage({
         type: 'success',
         text: `Saved ${result.rows_upserted} rows across ${result.dates_updated} date(s) to PostgreSQL. Data persists — no re-upload needed.`,
@@ -178,10 +210,11 @@ export default function GenerationInputTable() {
     try {
       const result = await resetJulyGenerationDb();
       if (fromDate >= JULY_START_DATE) {
-        setPageEdits({});
+        applyPageEdits({});
         setHasUploadForDate(false);
         setDisplayRows(buildDisplayRows(zeroRows(fromDate), {}));
       }
+      await refreshGenerationEdits();
       setUploadMessage({
         type: 'success',
         text: `Removed ${result.rows_deleted} July row(s) from PostgreSQL. June data was not changed.`,
@@ -228,6 +261,7 @@ export default function GenerationInputTable() {
       };
     });
     setPageEdits(newEdits);
+    syncEditsToOptimizer(newEdits);
   };
 
   const handleFilterDateChange = (field: 'from' | 'to', value: string) => {
@@ -235,6 +269,7 @@ export default function GenerationInputTable() {
     if (field === 'from') {
       const nextTo = clamped > toDate ? clamped : toDate;
       updateFilter({ fromDate: clamped, toDate: nextTo });
+      setSelectedDate(clamped);
     } else {
       const nextFrom = clamped < fromDate ? clamped : fromDate;
       updateFilter({ fromDate: nextFrom, toDate: clamped });
@@ -248,9 +283,8 @@ export default function GenerationInputTable() {
           <div>
             <h2 className="generation-input-title">Generation Input</h2>
             <p className="generation-input-subtitle">
-              Upload CSV once — data is stored in PostgreSQL and reloads automatically.
+              Upload CSV once — data is stored in PostgreSQL and feeds single-day and multi-day analysis.
               Dates after {formatSimulationDate(CONTRACT_END_DATE)} are blocked.
-              This data is for viewing only and does not affect single-day or multi-day analysis.
             </p>
           </div>
           <div className="generation-input-badges">
@@ -427,11 +461,7 @@ export default function GenerationInputTable() {
                         value={effWindSpeed}
                         style={cellInputStyle('#00d2ff', edit.wind_speed !== undefined)}
                         onChange={(e) => {
-                          const v = e.target.value;
-                          setPageEdits((prev) => ({
-                            ...prev,
-                            [row.block]: { ...(prev[row.block] ?? {}), wind_speed: v },
-                          }));
+                          updateBlockEdit(row.block, { wind_speed: e.target.value });
                         }}
                         onPaste={(e) => handlePaste(e, row.block)}
                       />
@@ -459,11 +489,7 @@ export default function GenerationInputTable() {
                         value={effSolarMW}
                         style={cellInputStyle('var(--color-solar)', edit.solar_mw !== undefined)}
                         onChange={(e) => {
-                          const v = e.target.value;
-                          setPageEdits((prev) => ({
-                            ...prev,
-                            [row.block]: { ...(prev[row.block] ?? {}), solar_mw: v },
-                          }));
+                          updateBlockEdit(row.block, { solar_mw: e.target.value });
                         }}
                         onPaste={(e) => handlePaste(e, row.block)}
                       />

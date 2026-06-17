@@ -164,7 +164,7 @@ export default function DispatchTable() {
                       b.solar_mw.toFixed(2)
                     )}
                   </td>
-                  <td className="mono-col">{(b.wind_mw + b.solar_mw).toFixed(2)}</td>
+                  <td className="mono-col">{b.generation_mw.toFixed(2)}</td>
                   <td>{pspBadge}</td>
                   <td className="mono-col">{b.soc_end.toFixed(1)} MWh</td>
                   <td className="mono-col" style={{ color: isShortfall ? '#ef4444' : '#10b981', fontWeight: 'bold' }}>

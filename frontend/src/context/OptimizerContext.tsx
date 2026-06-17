@@ -104,6 +104,7 @@ interface OptimizerContextValue {
   // Multi-day uploaded edits (date → block → edit)
   multiDayGenEdits: Record<string, Record<number, GenEdit>>;
   setMultiDayGenEdits: React.Dispatch<React.SetStateAction<Record<string, Record<number, GenEdit>>>>;
+  refreshGenerationEdits: () => Promise<void>;
 
   // Derived
   blocks: BlockData[];
@@ -291,14 +292,14 @@ export function OptimizerProvider({ children }: { children: React.ReactNode }) {
   useEffect(() => { multiDayGenEditsRef.current = multiDayGenEdits; }, [multiDayGenEdits]);
 
   // Load uploaded generation data from PostgreSQL for analysis tabs
-  useEffect(() => {
-    let cancelled = false;
-    fetchAllGenerationEdits().then((edits) => {
-      if (cancelled) return;
-      setMultiDayGenEdits(edits);
-    });
-    return () => { cancelled = true; };
+  const refreshGenerationEdits = useCallback(async () => {
+    const edits = await fetchAllGenerationEdits();
+    setMultiDayGenEdits(edits);
   }, []);
+
+  useEffect(() => {
+    refreshGenerationEdits().catch(() => {});
+  }, [refreshGenerationEdits]);
 
   // ── Build block_overrides list for API ──
   const buildOverridesList = useCallback(() => {
@@ -527,6 +528,7 @@ export function OptimizerProvider({ children }: { children: React.ReactNode }) {
     genTableEdits, setGenTableEdits,
     genTableExpanded, setGenTableExpanded,
     multiDayGenEdits, setMultiDayGenEdits,
+    refreshGenerationEdits,
     blocks, summary,
     handleRollToNextDay, handleClearCarry,
   };
