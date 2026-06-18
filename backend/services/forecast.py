@@ -102,6 +102,23 @@ def apply_curtailment_to_dataframe(df: pd.DataFrame, active_segments: list) -> p
     return out
 
 
+def _zero_baseline_day_data() -> pd.DataFrame:
+    """96-block zero profile (no reference CSV). Used when PostgreSQL has no upload."""
+    time_labels = [
+        f"{h:02d}:{m:02d}:00"
+        for h in range(24)
+        for m in (0, 15, 30, 45)
+    ]
+    return pd.DataFrame({
+        "block": list(range(1, 97)),
+        "time": time_labels,
+        "wind_speed_2024": [0.0] * 96,
+        "wind_speed_2025": [0.0] * 96,
+        "solar_2024": [0.0] * 96,
+        "solar_2025": [0.0] * 96,
+    })
+
+
 def generate_forecast(
     date_str: str,
     wtg_count: int,
@@ -110,6 +127,7 @@ def generate_forecast(
     curtailment_segments: list | None = None,
     curtailment_start_block: int = 37,
     curtailment_end_block: int = 64,
+    use_reference_data: bool = True,
 ) -> pd.DataFrame:
     """
     Generates a 96-block generation forecast for a given date in June.
@@ -139,37 +157,26 @@ def generate_forecast(
         curtailment_end_block=curtailment_end_block,
     )
 
-    june_df = load_june_data()
+    if use_reference_data:
+        june_df = load_june_data()
 
-    try:
-        requested_day = pd.to_datetime(date_str).day
-    except Exception:
-        requested_day = 1
+        try:
+            requested_day = pd.to_datetime(date_str).day
+        except Exception:
+            requested_day = 1
 
-    historical_date_str = f"2024-06-{requested_day:02d}"
-    day_data = june_df[june_df['date'] == historical_date_str].copy()
+        historical_date_str = f"2024-06-{requested_day:02d}"
+        day_data = june_df[june_df['date'] == historical_date_str].copy()
 
-    if len(day_data) == 0:
-        # Fallback: match by day-of-month if date column format differs
-        june_dates = pd.to_datetime(june_df['date'], errors='coerce')
-        day_data = june_df[june_dates.dt.day == requested_day].copy()
+        if len(day_data) == 0:
+            # Fallback: match by day-of-month if date column format differs
+            june_dates = pd.to_datetime(june_df['date'], errors='coerce')
+            day_data = june_df[june_dates.dt.day == requested_day].copy()
 
-    if len(day_data) == 0:
-        # No historical reference — build a flat zero-baseline so any date works.
-        # Uploaded block_overrides will replace these zeros with real forecast values.
-        time_labels = [
-            f"{h:02d}:{m:02d}:00"
-            for h in range(24)
-            for m in (0, 15, 30, 45)
-        ]
-        day_data = pd.DataFrame({
-            "block":          list(range(1, 97)),
-            "time":           time_labels,
-            "wind_speed_2024": [0.0] * 96,
-            "wind_speed_2025": [0.0] * 96,
-            "solar_2024":      [0.0] * 96,
-            "solar_2025":      [0.0] * 96,
-        })
+        if len(day_data) == 0:
+            day_data = _zero_baseline_day_data()
+    else:
+        day_data = _zero_baseline_day_data()
 
     results = []
     for _, row in day_data.iterrows():

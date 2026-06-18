@@ -1,12 +1,15 @@
 import pandas as pd
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Depends
+from sqlalchemy.orm import Session
 from models.schemas import (
     ScheduleRequest, ScheduleResponse,
     MaxRTCRequest, MaxRTCResponse,
     RTCRangeRequest, RTCRangeResponse,
     MultiDayMaxRTCRequest, MultiDayMaxRTCResponse,
 )
+from db.database import get_db
 from services.forecast import generate_forecast, apply_curtailment_to_dataframe, resolve_active_segments
+from services.generation_store import block_overrides_from_db
 from services.psp_optimizer import optimize_psp_dispatch, find_max_rtc_no_shortfall, calculate_rtc_range, find_max_rtc_multiday
 
 router = APIRouter()
@@ -77,6 +80,34 @@ def _resolve_psp_discharge_segments(request) -> list | None:
     return [s.model_dump() if hasattr(s, 'model_dump') else dict(s) for s in segs]
 
 
+def _forecast_for_request(
+    request,
+    active_segments: list,
+    *,
+    date: str | None = None,
+    block_overrides=None,
+):
+    """Zero baseline forecast + optional block overrides (PostgreSQL-sourced generation)."""
+    target_date = date or request.date
+    forecast_df = generate_forecast(
+        date_str=target_date,
+        wtg_count=request.wtg_count,
+        solar_ac_mw=request.solar_ac_mw,
+        curtailment_enabled=request.curtailment_enabled,
+        curtailment_segments=_resolve_segments(request),
+        curtailment_start_block=request.curtailment_start_block,
+        curtailment_end_block=request.curtailment_end_block,
+        use_reference_data=False,
+    )
+    overrides = block_overrides if block_overrides is not None else getattr(request, 'block_overrides', None)
+    return _apply_overrides(
+        forecast_df,
+        overrides,
+        request.solar_ac_mw,
+        active_segments,
+    )
+
+
 @router.post("/schedule", response_model=ScheduleResponse)
 def get_optimal_schedule(request: ScheduleRequest):
     """
@@ -93,23 +124,7 @@ def get_optimal_schedule(request: ScheduleRequest):
             curtailment_start_block=request.curtailment_start_block,
             curtailment_end_block=request.curtailment_end_block,
         )
-        forecast_df = generate_forecast(
-            date_str=request.date,
-            wtg_count=request.wtg_count,
-            solar_ac_mw=request.solar_ac_mw,
-            curtailment_enabled=request.curtailment_enabled,
-            curtailment_segments=_resolve_segments(request),
-            curtailment_start_block=request.curtailment_start_block,
-            curtailment_end_block=request.curtailment_end_block,
-        )
-
-        # Apply user-edited block overrides (raw profile), then re-apply curtailment
-        forecast_df = _apply_overrides(
-            forecast_df,
-            request.block_overrides,
-            request.solar_ac_mw,
-            active_segments,
-        )
+        forecast_df = _forecast_for_request(request, active_segments)
 
         dispatch_results = optimize_psp_dispatch(
             forecast_df=forecast_df,
@@ -134,15 +149,13 @@ def get_max_possible_rtc(request: MaxRTCRequest):
     (no shortfall at any block). Returns the schedule for that commitment.
     """
     try:
-        forecast_df = generate_forecast(
-            date_str=request.date,
-            wtg_count=request.wtg_count,
-            solar_ac_mw=request.solar_ac_mw,
+        active_segments = resolve_active_segments(
             curtailment_enabled=request.curtailment_enabled,
             curtailment_segments=_resolve_segments(request),
             curtailment_start_block=request.curtailment_start_block,
             curtailment_end_block=request.curtailment_end_block,
         )
+        forecast_df = _forecast_for_request(request, active_segments)
 
         psp = _psp_params(request)
         psp_dis_segs = _resolve_psp_discharge_segments(request)
@@ -187,22 +200,7 @@ def get_rtc_range(request: RTCRangeRequest):
             curtailment_start_block=request.curtailment_start_block,
             curtailment_end_block=request.curtailment_end_block,
         )
-        forecast_df = generate_forecast(
-            date_str=request.date,
-            wtg_count=request.wtg_count,
-            solar_ac_mw=request.solar_ac_mw,
-            curtailment_enabled=request.curtailment_enabled,
-            curtailment_segments=_resolve_segments(request),
-            curtailment_start_block=request.curtailment_start_block,
-            curtailment_end_block=request.curtailment_end_block,
-        )
-
-        forecast_df = _apply_overrides(
-            forecast_df,
-            request.block_overrides,
-            request.solar_ac_mw,
-            active_segments,
-        )
+        forecast_df = _forecast_for_request(request, active_segments)
 
         psp = _psp_params(request)
         result = calculate_rtc_range(
@@ -217,7 +215,7 @@ def get_rtc_range(request: RTCRangeRequest):
 
 
 @router.post("/multi-day-max-rtc", response_model=MultiDayMaxRTCResponse)
-def get_multi_day_max_rtc(request: MultiDayMaxRTCRequest):
+def get_multi_day_max_rtc(request: MultiDayMaxRTCRequest, db: Session = Depends(get_db)):
     """
     True cross-day optimal RTC: binary-searches for the maximum RTC commitment
     where every block on every requested day is 100% compliant, with SOC
@@ -230,16 +228,19 @@ def get_multi_day_max_rtc(request: MultiDayMaxRTCRequest):
         if not request.dates:
             raise ValueError("At least one date is required.")
 
-        # Generate forecast DataFrames for all days up-front
+        active_segments = resolve_active_segments(
+            curtailment_enabled=request.curtailment_enabled,
+            curtailment_segments=_resolve_segments(request),
+            curtailment_start_block=request.curtailment_start_block,
+            curtailment_end_block=request.curtailment_end_block,
+        )
+
         forecast_dfs = [
-            generate_forecast(
-                date_str=date,
-                wtg_count=request.wtg_count,
-                solar_ac_mw=request.solar_ac_mw,
-                curtailment_enabled=request.curtailment_enabled,
-                curtailment_segments=_resolve_segments(request),
-                curtailment_start_block=request.curtailment_start_block,
-                curtailment_end_block=request.curtailment_end_block,
+            _forecast_for_request(
+                request,
+                active_segments,
+                date=date,
+                block_overrides=block_overrides_from_db(db, date, request.wtg_count),
             )
             for date in request.dates
         ]

@@ -16,6 +16,7 @@ from sqlalchemy.orm import Session
 
 from db.models import GenerationInput
 from services.constants import CONTRACT_END_DATE, CONTRACT_START_DATE, JULY_START_DATE
+from services.forecast import get_power_for_wind_speed
 
 BLOCK_TIMES = [
     f"{h:02d}:{m:02d}:00"
@@ -394,6 +395,27 @@ def build_template_csv(db: Session, from_date: str, to_date: str) -> str:
                 f"{d},{row['block']},{time_short},{row['wind_speed']:.2f},{row['solar_mw']:.3f}"
             )
     return "\n".join(lines) + "\n"
+
+
+def block_overrides_from_db(db: Session, for_date: str, wtg_count: int) -> list[dict[str, Any]]:
+    """Build schedule block_overrides from PostgreSQL generation_inputs for a date."""
+    rows = get_generation_for_date(db, for_date)
+    if not any(r.get("has_upload") for r in rows):
+        return []
+
+    overrides: list[dict[str, Any]] = []
+    for row in rows:
+        if not row.get("has_upload"):
+            continue
+        wind_speed = float(row["wind_speed"])
+        power_kw = get_power_for_wind_speed(wind_speed)
+        wind_mw = round((power_kw / 1000.0) * wtg_count, 4)
+        overrides.append({
+            "block": int(row["block"]),
+            "wind_mw": wind_mw,
+            "solar_mw": float(row["solar_mw"]),
+        })
+    return overrides
 
 
 def get_all_uploaded_as_edits(db: Session) -> dict[str, dict[str, dict[str, str]]]:

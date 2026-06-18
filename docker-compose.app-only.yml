@@ -1,25 +1,9 @@
-services:
-  postgres:
-    image: postgres:16-alpine
-    container_name: re-rtc-postgres
-    restart: unless-stopped
-    env_file:
-      - backend/.env
-    environment:
-      POSTGRES_USER: ${POSTGRES_USER:-re_rtc}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-re_rtc_secret}
-      POSTGRES_DB: ${POSTGRES_DB:-re_rtc}
-    ports:
-      - "${POSTGRES_PORT:-5432}:5432"
-    volumes:
-      - postgres_data:/var/lib/postgresql/data
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-re_rtc} -d ${POSTGRES_DB:-re_rtc}"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
-      start_period: 10s
+# App + external RDS — no bundled Postgres.
+# Usage:
+#   export DATABASE_URL='postgresql+psycopg://user:pass@your-rds-host:5432/re_rtc'
+#   docker compose -f docker-compose.app-only.yml up -d --build
 
+services:
   backend:
     build:
       context: ./backend
@@ -27,9 +11,6 @@ services:
     image: re-rtc-backend:latest
     container_name: re-rtc-backend
     restart: unless-stopped
-    depends_on:
-      postgres:
-        condition: service_healthy
     expose:
       - "8000"
     env_file:
@@ -40,9 +21,9 @@ services:
       - DEV_RELOAD=false
       - SERVE_FRONTEND=false
       - ALLOWED_ORIGINS=${ALLOWED_ORIGINS:-*}
-      - DATABASE_URL=postgresql+psycopg://${POSTGRES_USER:-re_rtc}:${POSTGRES_PASSWORD:-re_rtc_secret}@postgres:5432/${POSTGRES_DB:-re_rtc}
+      - DATABASE_URL=${DATABASE_URL:?Set DATABASE_URL to your RDS connection string}
       - ADMIN_USERNAME=${ADMIN_USERNAME:-admin}
-      - ADMIN_PASSWORD=${ADMIN_PASSWORD:-12345}
+      - ADMIN_PASSWORD=${ADMIN_PASSWORD:-admin}
       - ADMIN_JWT_SECRET=${ADMIN_JWT_SECRET:-change-me-to-a-long-random-secret}
       - ADMIN_TOKEN_EXPIRE_HOURS=${ADMIN_TOKEN_EXPIRE_HOURS:-12}
     volumes:
@@ -75,6 +56,3 @@ services:
       timeout: 5s
       retries: 3
       start_period: 10s
-
-volumes:
-  postgres_data:

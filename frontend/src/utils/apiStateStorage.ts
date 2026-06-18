@@ -30,7 +30,7 @@ export async function loadStateFromDb<T>(key: StateKey): Promise<T | null> {
   }
 }
 
-export async function saveStateToDb<T extends Record<string, unknown>>(
+export async function saveStateToDb<T>(
   key: StateKey,
   data: T,
 ): Promise<boolean> {

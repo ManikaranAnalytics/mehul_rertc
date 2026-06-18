@@ -1407,6 +1407,9 @@ table.schedule-table {
 .generation-readonly-value--solar {
   color: var(--color-solar);
   font-weight: 600;
+  pointer-events: none;
+  cursor: default;
+  user-select: text;
 }
 
 .generation-curtailed-label,

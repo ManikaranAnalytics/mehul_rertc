@@ -1,0 +1,30 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Local venv (if created inside backend/)
+.venv/
+
+# Env secrets
+.env
+.env.*
+!.env.example
+
+# Logs
+*.log
+
+# Uploaded / generated spreadsheets (not shipped in repo)
+*.xlsx
+
+# OS
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/

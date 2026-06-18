@@ -13,7 +13,6 @@ import {
   dbRowsToGenEdits,
   downloadGenerationTemplate,
   fetchGenerationFromDb,
-  patchGenerationBlocks,
   uploadGenerationCsv,
   type GenerationDbRow,
 } from '../../utils/generationDbApi';
@@ -92,17 +91,7 @@ export default function GenerationInputTable() {
   const [loading, setLoading] = useState(false);
   const [hasUploadForDate, setHasUploadForDate] = useState(false);
   const [displayRows, setDisplayRows] = useState<DisplayRow[]>([]);
-  const [saving, setSaving] = useState(false);
 
-  const pageEditsRef = useRef(pageEdits);
-  const displayRowsRef = useRef(displayRows);
-  const pendingSavesRef = useRef<Set<number>>(new Set());
-  const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-
-  useEffect(() => { pageEditsRef.current = pageEdits; }, [pageEdits]);
-  useEffect(() => { displayRowsRef.current = displayRows; }, [displayRows]);
-
-  const modifiedCount = Object.keys(pageEdits).length;
   const datesInRange = getDatesInRange(fromDate, toDate);
 
   const updateFilter = useCallback((patch: Partial<GenerationFilterState>) => {
@@ -139,72 +128,6 @@ export default function GenerationInputTable() {
     });
   }, [curtailmentEnabled, curtailmentSegments, wtgCount]);
 
-  const getBlockPersistValues = useCallback((block: number): { wind_speed: number; solar_mw: number } | null => {
-    const row = displayRowsRef.current.find((r) => r.block === block);
-    if (!row) return null;
-    const edit = pageEditsRef.current[block] ?? {};
-    const windStr = edit.wind_speed !== undefined ? edit.wind_speed : String(row.wind_speed);
-    const solarStr = edit.solar_mw !== undefined ? edit.solar_mw : String(row.solar_mw);
-    const wind_speed = parseFloat(windStr);
-    const solar_mw = parseFloat(solarStr);
-    if (isNaN(wind_speed) || isNaN(solar_mw)) return null;
-    return { wind_speed, solar_mw };
-  }, []);
-
-  const flushSavesRef = useRef<() => Promise<void>>(async () => {});
-
-  const flushSaves = useCallback(async () => {
-    const blocks = Array.from(pendingSavesRef.current);
-    pendingSavesRef.current.clear();
-    if (blocks.length === 0) return;
-
-    const rows = blocks
-      .map((block) => {
-        const values = getBlockPersistValues(block);
-        return values ? { block, ...values } : null;
-      })
-      .filter((r): r is { block: number; wind_speed: number; solar_mw: number } => r !== null);
-
-    if (rows.length === 0) return;
-
-    setSaving(true);
-    try {
-      await patchGenerationBlocks(fromDate, rows, solarAc);
-      setHasUploadForDate(true);
-      await refreshGenerationEdits();
-      const response = await fetchGenerationFromDb(fromDate);
-      const edits = response.has_upload ? dbRowsToGenEdits(response.rows) : {};
-      setPageEdits(edits);
-      syncEditsToOptimizer(edits);
-      setDisplayRows(buildDisplayRows(response.rows, edits));
-    } catch (err) {
-      const message = err instanceof Error ? err.message : 'Failed to save changes.';
-      setUploadMessage({ type: 'error', text: message });
-    } finally {
-      setSaving(false);
-    }
-  }, [fromDate, solarAc, refreshGenerationEdits, getBlockPersistValues, buildDisplayRows, syncEditsToOptimizer]);
-
-  useEffect(() => { flushSavesRef.current = flushSaves; }, [flushSaves]);
-
-  const updateBlockEdit = useCallback((block: number, patch: Partial<GenEdit>) => {
-    setPageEdits((prev) => {
-      const next = {
-        ...prev,
-        [block]: { ...(prev[block] ?? {}), ...patch },
-      };
-      syncEditsToOptimizer(next);
-      return next;
-    });
-    pendingSavesRef.current.add(block);
-    if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
-    saveTimerRef.current = setTimeout(() => { void flushSavesRef.current(); }, 400);
-  }, [syncEditsToOptimizer]);
-
-  useEffect(() => () => {
-    if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
-  }, []);
-
   // Load generation data from PostgreSQL (isolated from single/multi-day analysis)
   useEffect(() => {
     let cancelled = false;
@@ -235,20 +158,6 @@ export default function GenerationInputTable() {
   useEffect(() => {
     setDisplayRows((prev) => buildDisplayRows(prev, pageEdits));
   }, [pageEdits, curtailmentEnabled, curtailmentSegments, wtgCount, buildDisplayRows]);
-
-  const cellInputStyle = (color: string, modified: boolean): React.CSSProperties => ({
-    width: '100%',
-    background: modified ? 'rgba(245,158,11,0.08)' : '#0a1020',
-    border: `1px solid ${modified ? 'rgba(245,158,11,0.4)' : 'rgba(255,255,255,0.07)'}`,
-    borderRadius: '5px',
-    color: modified ? '#fbbf24' : color,
-    padding: '4px 7px',
-    fontSize: '12px',
-    fontFamily: 'JetBrains Mono, monospace',
-    fontWeight: modified ? '700' : '400',
-    outline: 'none',
-    transition: 'border-color 0.15s',
-  });
 
   const handleFileUpload = async (file: File) => {
     setUploadMessage(null);
@@ -306,34 +215,6 @@ export default function GenerationInputTable() {
     }
   };
 
-  const handlePaste = (e: React.ClipboardEvent, startBlock: number) => {
-    e.preventDefault();
-    const text = e.clipboardData.getData('text');
-    const lines = text.trim().split(/\r?\n/).filter(Boolean);
-    if (lines.length === 0) return;
-
-    const newEdits = { ...pageEdits };
-    const affectedBlocks: number[] = [];
-    lines.forEach((line, i) => {
-      const cells = line.includes('\t') ? line.split('\t') : line.split(',');
-      const block = parseInt(cells[0], 10) || startBlock + i;
-      if (block < 1 || block > 96) return;
-      const wind = cells[1]?.trim();
-      const solar = cells[2]?.trim();
-      newEdits[block] = {
-        ...(newEdits[block] ?? {}),
-        ...(wind ? { wind_speed: wind } : {}),
-        ...(solar ? { solar_mw: solar } : {}),
-      };
-      affectedBlocks.push(block);
-    });
-    setPageEdits(newEdits);
-    syncEditsToOptimizer(newEdits);
-    affectedBlocks.forEach((b) => pendingSavesRef.current.add(b));
-    if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
-    saveTimerRef.current = setTimeout(() => { void flushSavesRef.current(); }, 400);
-  };
-
   const handleFilterDateChange = (field: 'from' | 'to', value: string) => {
     const clamped = clampContractDate(value);
     if (field === 'from') {
@@ -363,14 +244,9 @@ export default function GenerationInputTable() {
               &nbsp;·&nbsp;{datesInRange.length} day{datesInRange.length !== 1 ? 's' : ''}
               &nbsp;·&nbsp;{datesInRange.length * 96} blocks
             </span>
-            {loading && !saving && (
+            {loading && (
               <span className="generation-badge generation-badge--modified" style={{ color: '#94a3b8' }}>
                 Loading from database…
-              </span>
-            )}
-            {saving && (
-              <span className="generation-badge generation-badge--modified" style={{ color: '#60a5fa' }}>
-                Saving to database…
               </span>
             )}
             {!loading && !hasUploadForDate && (
@@ -381,11 +257,6 @@ export default function GenerationInputTable() {
             {!loading && hasUploadForDate && (
               <span className="generation-badge generation-badge--stored">
                 Loaded from PostgreSQL
-              </span>
-            )}
-            {modifiedCount > 0 && (
-              <span className="generation-badge generation-badge--modified">
-                {modifiedCount} edited on screen
               </span>
             )}
           </div>
@@ -454,7 +325,7 @@ export default function GenerationInputTable() {
             {templateLoading ? 'Fetching…' : 'Template'}
           </button>
 
-          {fromDate >= JULY_START_DATE && (modifiedCount > 0 || hasUploadForDate) && (
+          {fromDate >= JULY_START_DATE && hasUploadForDate && (
             <button
               id="gen-reset-btn"
               type="button"
@@ -477,8 +348,8 @@ export default function GenerationInputTable() {
         <span>Upload columns: <strong>date</strong>, <strong>block</strong>, <strong>wind_speed</strong>, <strong>solar_mw</strong></span>
         <span>Contract window: {CONTRACT_START_DATE} to {CONTRACT_END_DATE}</span>
         <span>Template downloads data for the selected filter range (uploaded values or zeros)</span>
-        <span>Wind Gen (MW) is calculated from wind speed — not directly editable</span>
-        <span>Cell edits auto-save to PostgreSQL</span>
+        <span>Wind Speed and Solar Gen are set via CSV upload — not editable in the table</span>
+        <span>Wind Gen (MW) is calculated from wind speed</span>
       </div>
 
       <div className="table-container gen-input-table" ref={genTableRef} key={fromDate}>
@@ -495,32 +366,20 @@ export default function GenerationInputTable() {
           </thead>
           <tbody>
             {displayRows.map((row) => {
-              const edit = pageEdits[row.block] ?? {};
-              const isModified = !!pageEdits[row.block];
               const isCurtailed = row.curtail_flag;
 
-              const effWindSpeed =
-                edit.wind_speed !== undefined ? edit.wind_speed : row.wind_speed.toFixed(2);
-              const effWindMW =
-                edit.wind_speed !== undefined && edit.wind_speed !== ''
-                  ? lookupWindMW(parseFloat(edit.wind_speed), wtgCount)
-                  : row.wind_mw_raw;
-              const effSolarMW =
-                edit.solar_mw !== undefined ? edit.solar_mw : row.solar_mw.toFixed(3);
+              const effWindSpeed = row.wind_speed.toFixed(2);
+              const effWindMW = row.wind_mw_raw;
+              const effSolarMW = row.solar_mw.toFixed(3);
 
-              const rowBg = isModified
-                ? 'rgba(245,158,11,0.07)'
-                : isCurtailed
-                  ? 'rgba(239,68,68,0.03)'
-                  : 'transparent';
+              const rowBg = isCurtailed ? 'rgba(239,68,68,0.03)' : 'transparent';
 
               return (
                 <tr
                   key={row.block}
-                  className={isModified ? 'gen-modified-row' : ''}
                   style={{ background: rowBg, borderBottom: '1px solid rgba(255,255,255,0.03)' }}
                 >
-                  <td className="mono-col" style={{ color: isModified ? '#fbbf24' : '#64748b', fontWeight: isModified ? '700' : '400' }}>
+                  <td className="mono-col" style={{ color: '#64748b' }}>
                     {row.block}
                   </td>
                   <td className="mono-col" style={{ color: '#64748b' }}>{row.time.substring(0, 5)}</td>
@@ -529,18 +388,14 @@ export default function GenerationInputTable() {
                     {isCurtailed ? (
                       <span className="generation-curtailed-label">Curtailed</span>
                     ) : (
-                      <input
-                        type="number"
-                        step="0.1"
-                        min="0"
-                        max="25"
-                        value={effWindSpeed}
-                        style={cellInputStyle('#00d2ff', edit.wind_speed !== undefined)}
-                        onChange={(e) => {
-                          updateBlockEdit(row.block, { wind_speed: e.target.value });
-                        }}
-                        onPaste={(e) => handlePaste(e, row.block)}
-                      />
+                      <div
+                        className={`generation-readonly-value generation-readonly-value--wind ${hasUploadForDate ? 'generation-readonly-value--active' : ''}`}
+                        aria-readonly="true"
+                        tabIndex={-1}
+                        title="Set via CSV upload (read-only)"
+                      >
+                        {effWindSpeed}
+                      </div>
                     )}
                   </td>
 
@@ -549,7 +404,7 @@ export default function GenerationInputTable() {
                       <span className="generation-readonly-value generation-readonly-value--wind">0.000</span>
                     ) : (
                       <div
-                        className={`generation-readonly-value generation-readonly-value--wind ${edit.wind_speed !== undefined ? 'generation-readonly-value--active' : ''}`}
+                        className={`generation-readonly-value generation-readonly-value--wind ${hasUploadForDate ? 'generation-readonly-value--active' : ''}`}
                         aria-readonly="true"
                         tabIndex={-1}
                         title="Calculated from wind speed (read-only)"
@@ -563,25 +418,20 @@ export default function GenerationInputTable() {
                     {isCurtailed ? (
                       <span className="generation-readonly-value generation-readonly-value--solar">0.000</span>
                     ) : (
-                      <input
-                        type="number"
-                        step="0.001"
-                        min="0"
-                        value={effSolarMW}
-                        style={cellInputStyle('var(--color-solar)', edit.solar_mw !== undefined)}
-                        onChange={(e) => {
-                          updateBlockEdit(row.block, { solar_mw: e.target.value });
-                        }}
-                        onPaste={(e) => handlePaste(e, row.block)}
-                      />
+                      <div
+                        className={`generation-readonly-value generation-readonly-value--solar ${hasUploadForDate ? 'generation-readonly-value--active' : ''}`}
+                        aria-readonly="true"
+                        tabIndex={-1}
+                        title="Set via CSV upload (read-only)"
+                      >
+                        {effSolarMW}
+                      </div>
                     )}
                   </td>
 
                   <td>
                     {isCurtailed ? (
                       <span className="cell-badge curtail">Curtailed</span>
-                    ) : isModified ? (
-                      <span className="cell-badge generation-edited-badge">Edited</span>
                     ) : hasUploadForDate ? (
                       <span className="generation-status-default">Uploaded</span>
                     ) : (

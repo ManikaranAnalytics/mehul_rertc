@@ -2,7 +2,7 @@
 # Install portable PostgreSQL 16 for macOS (arm64) into .tools/postgresql
 set -euo pipefail
 
-ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 TOOLS="$ROOT/.tools"
 PG_DIR="$TOOLS/postgresql-16"
 PGDATA="$ROOT/.pgdata"

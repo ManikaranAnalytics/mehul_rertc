@@ -19,10 +19,10 @@ Thumbs.db
 .vscode/
 .idea/
 
-# Env files
-.env
-.env.*
-!.env.example
+# Env files (backend)
+backend/.env
+backend/.env.*
+!backend/.env.example
 
 # Misc
 *.xlsx

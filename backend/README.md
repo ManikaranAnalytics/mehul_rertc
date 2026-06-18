@@ -1,0 +1,75 @@
+# RE-RTC Backend (FastAPI)
+
+FastAPI optimization API for the Hindalco RTC dispatch optimizer. Listens on port **8000**.
+
+## Local development (no Docker)
+
+```bash
+cp .env.example .env   # first time only
+cd backend
+../.venv/bin/uvicorn main:app --host 0.0.0.0 --port 8000 --reload
+```
+
+- `backend/.env` is loaded automatically on startup (`python-dotenv`).
+- Use `../.venv/bin/uvicorn` — system Python may not have project dependencies.
+- API docs: http://localhost:8000/docs
+- Health: http://localhost:8000/api/health
+
+### PostgreSQL
+
+Use a local Postgres instance or the bundled Docker profile (below). Example `DATABASE_URL` in `.env`:
+
+```
+DATABASE_URL=postgresql+psycopg://re_rtc@localhost:5432/re_rtc
+```
+
+Optional macOS portable Postgres scripts (repo root `.tools/` + `.pgdata/`):
+
+```bash
+bash scripts/setup_postgres.sh   # first time
+bash scripts/start_postgres.sh
+```
+
+## Docker (backend only)
+
+From this directory:
+
+```bash
+cp .env.example .env
+docker compose --env-file .env up -d --build
+```
+
+API at http://localhost:8000
+
+**With bundled Postgres:**
+
+```bash
+DB_HOST=postgres docker compose --env-file .env --profile db up -d --build
+```
+
+When the backend container talks to Postgres on your Mac (not in Docker), set `DATABASE_URL` to use `host.docker.internal` instead of `localhost`.
+
+## Environment variables
+
+| Variable | Default | Notes |
+|----------|---------|-------|
+| `DATABASE_URL` | — | PostgreSQL connection string |
+| `PORT` | `8000` | Uvicorn listen port |
+| `WEB_CONCURRENCY` | `2` | Workers in Docker |
+| `ALLOWED_ORIGINS` | `*` | CORS |
+| `ADMIN_USERNAME` | `admin` | Admin panel login |
+| `ADMIN_PASSWORD` | `12345` | Change in production |
+| `ADMIN_JWT_SECRET` | — | JWT signing secret |
+| `SERVE_FRONTEND` | `false` | Legacy: serve `frontend/dist` from FastAPI |
+
+See `.env.example` for the full list.
+
+## Data
+
+- `data/` — forecast CSVs and power curves (baked into the Docker image)
+- `assets/` — static assets
+- `migrations/` — manual SQL reference (schema is created via `init_db()` on startup)
+
+## Production
+
+For full-stack deployment (backend + frontend + Postgres), see the repo root [DEPLOYMENT.md](../DEPLOYMENT.md).

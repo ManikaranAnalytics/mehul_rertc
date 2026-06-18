@@ -1,8 +1,13 @@
 import os
 from collections.abc import Generator
+from pathlib import Path
 
+from dotenv import load_dotenv
 from sqlalchemy import create_engine, text
 from sqlalchemy.orm import DeclarativeBase, Session, sessionmaker
+
+# Load backend/.env for local dev; Docker/Compose env vars take precedence (override=False).
+load_dotenv(Path(__file__).resolve().parent.parent / ".env")
 
 DEFAULT_DATABASE_URL = os.getenv("DATABASE_URL", "")  # empty = no DB configured
 
@@ -53,7 +58,7 @@ def get_db() -> Generator[Session, None, None]:
 def init_db() -> None:
     if engine is None:
         return
-    from db import models  # noqa: F401
+    from db import admin_models, models  # noqa: F401
     Base.metadata.create_all(bind=engine)
 
 

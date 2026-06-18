@@ -30,7 +30,7 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
-# CORS — dev: allow all; production: same-origin (frontend served by FastAPI itself)
+# CORS — dev: allow all; production: nginx proxies /api on same origin
 _ALLOWED_ORIGINS = os.getenv("ALLOWED_ORIGINS", "*").split(",")
 app.add_middleware(
     CORSMiddleware,
@@ -49,12 +49,15 @@ app.include_router(persistence.router, prefix="/api")
 app.include_router(auth.router, prefix="/api")
 app.include_router(admin.router, prefix="/api")
 
-# ── Serve the built React frontend (production) ──────────────────────────────
-# The frontend/dist directory is created by `npm run build` inside frontend/.
-# In development, the Vite dev server (port 5173) handles the frontend.
-FRONTEND_DIST = os.path.join(os.path.dirname(__file__), "frontend", "dist")
+# Optional: serve built React app from the backend (single-container legacy mode).
+# Segregated Docker deployment uses the frontend/nginx container instead.
+_SERVE_FRONTEND = os.getenv("SERVE_FRONTEND", "false").lower() in ("1", "true", "yes")
+_FRONTEND_DIST_DEFAULT = os.path.normpath(
+    os.path.join(os.path.dirname(__file__), "..", "frontend", "dist")
+)
+FRONTEND_DIST = os.path.abspath(os.getenv("FRONTEND_DIST", _FRONTEND_DIST_DEFAULT))
 
-if os.path.isdir(FRONTEND_DIST):
+if _SERVE_FRONTEND and os.path.isdir(FRONTEND_DIST):
     # Mount the entire dist directory — StaticFiles with html=True serves
     # index.html as fallback for any path not matched by an API route,
     # which is exactly what a SPA (React Router) needs.

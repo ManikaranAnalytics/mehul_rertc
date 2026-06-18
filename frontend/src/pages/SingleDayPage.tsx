@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { useOptimizer } from '../context/OptimizerContext';
-import { AlertTriangle, CheckCircle2, Menu, X, PanelLeftClose, PanelLeftOpen, BatteryCharging, Eye } from 'lucide-react';
+import { AlertTriangle, CheckCircle2, Menu, X } from 'lucide-react';
 
 // Dashboard components
 import KPICards from '../components/dashboard/KPICards';
@@ -19,10 +19,10 @@ export default function SingleDayPage() {
 
   // Mobile drawer
   const [sidebarOpen, setSidebarOpen] = useState(false);
-  // Desktop collapse
-  const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
-  // Tank gauge visibility
-  const [tankVisible, setTankVisible] = useState(true);
+  // Desktop collapse — config panel stays visible (view toggles hidden)
+  const [sidebarCollapsed] = useState(false);
+  // Tank gauge stays visible (view toggles hidden)
+  const [tankVisible] = useState(true);
 
   // Full-page loader while initial fetch resolves
   if (!scheduleData && loading) {
@@ -67,7 +67,7 @@ export default function SingleDayPage() {
             </div>
           )}
 
-          {/* View toggle pills — compact, grouped */}
+          {/* View toggle pills — hidden per product request
           <div className="view-toggles">
             <button
               className={`view-toggle-pill ${!sidebarCollapsed ? 'active' : ''}`}
@@ -84,6 +84,7 @@ export default function SingleDayPage() {
               {tankVisible ? <BatteryCharging size={14} /> : <Eye size={14} />}
             </button>
           </div>
+          */}
         </div>
       </div>
 

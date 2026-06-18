@@ -1,0 +1,26 @@
+# Standalone frontend — run from frontend/ directory.
+# Requires a running backend (host uvicorn, backend container, or remote API).
+#
+#   BACKEND_UPSTREAM=http://host.docker.internal:8000 docker compose up -d --build
+#     → UI at http://localhost:3000
+
+services:
+  frontend:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: re-rtc-frontend:latest
+    container_name: re-rtc-frontend-local
+    restart: unless-stopped
+    ports:
+      - "${FRONTEND_PORT:-3000}:80"
+    environment:
+      BACKEND_UPSTREAM: ${BACKEND_UPSTREAM:-http://host.docker.internal:8000}
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1/"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s

@@ -2,13 +2,13 @@
 # Start local PostgreSQL (run setup_postgres.sh first if not installed)
 set -euo pipefail
 
-ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 PG_DIR="$ROOT/.tools/postgresql-16"
 PGDATA="$ROOT/.pgdata"
 
 if [[ ! -x "$PG_DIR/bin/postgres" ]]; then
   echo "PostgreSQL not installed. Running setup_postgres.sh..."
-  bash "$ROOT/scripts/setup_postgres.sh"
+  bash "$(dirname "$0")/setup_postgres.sh"
   exit 0
 fi
 

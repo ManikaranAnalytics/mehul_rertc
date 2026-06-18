@@ -1,73 +1,51 @@
-# React + TypeScript + Vite
+# RE-RTC Frontend (React + Vite)
 
-This template provides a minimal setup to get React working in Vite with HMR and some ESLint rules.
+React SPA for the RTC dispatch optimizer.
 
-Currently, two official plugins are available:
+## Local development (no Docker)
 
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Oxc](https://oxc.rs)
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/)
-
-## React Compiler
-
-The React Compiler is not enabled on this template because of its impact on dev & build performances. To add it, see [this documentation](https://react.dev/learn/react-compiler/installation).
-
-## Expanding the ESLint configuration
-
-If you are developing a production application, we recommend updating the configuration to enable type-aware lint rules:
-
-```js
-export default defineConfig([
-  globalIgnores(['dist']),
-  {
-    files: ['**/*.{ts,tsx}'],
-    extends: [
-      // Other configs...
-
-      // Remove tseslint.configs.recommended and replace with this
-      tseslint.configs.recommendedTypeChecked,
-      // Alternatively, use this for stricter rules
-      tseslint.configs.strictTypeChecked,
-      // Optionally, add this for stylistic rules
-      tseslint.configs.stylisticTypeChecked,
-
-      // Other configs...
-    ],
-    languageOptions: {
-      parserOptions: {
-        project: ['./tsconfig.node.json', './tsconfig.app.json'],
-        tsconfigRootDir: import.meta.dirname,
-      },
-      // other options...
-    },
-  },
-])
+```bash
+cd frontend
+npm install          # first time
+npm run dev -- --host 0.0.0.0
 ```
 
-You can also install [eslint-plugin-react-x](https://github.com/Rel1cx/eslint-react/tree/main/packages/plugins/eslint-plugin-react-x) and [eslint-plugin-react-dom](https://github.com/Rel1cx/eslint-react/tree/main/packages/plugins/eslint-plugin-react-dom) for React-specific lint rules:
+Open http://localhost:5173 — Vite proxies `/api` to http://localhost:8000.
 
-```js
-// eslint.config.js
-import reactX from 'eslint-plugin-react-x'
-import reactDom from 'eslint-plugin-react-dom'
+If `npm` is not on your PATH, use the portable Node under the repo `.tools/` directory or install Node 20+.
 
-export default defineConfig([
-  globalIgnores(['dist']),
-  {
-    files: ['**/*.{ts,tsx}'],
-    extends: [
-      // Other configs...
-      // Enable lint rules for React
-      reactX.configs['recommended-typescript'],
-      // Enable lint rules for React DOM
-      reactDom.configs.recommended,
-    ],
-    languageOptions: {
-      parserOptions: {
-        project: ['./tsconfig.node.json', './tsconfig.app.json'],
-        tsconfigRootDir: import.meta.dirname,
-      },
-      // other options...
-    },
-  },
-])
+**Requires a running backend** on port 8000 (see [backend/README.md](../backend/README.md)).
+
+## Docker (frontend only)
+
+From this directory:
+
+```bash
+BACKEND_UPSTREAM=http://host.docker.internal:8000 docker compose up -d --build
+```
+
+UI at http://localhost:3000 (override with `FRONTEND_PORT`).
+
+| `BACKEND_UPSTREAM` | When to use |
+|--------------------|-------------|
+| `http://host.docker.internal:8000` | Backend on host (uvicorn or backend container publishing :8000) — **Mac/Windows Docker** |
+| `http://172.17.0.1:8000` | Backend on host — **Linux Docker** (or use host IP) |
+| `http://backend:8000` | Backend on same Docker Compose network (root full-stack compose) |
+
+The nginx container proxies `/api/`, `/docs`, and `/openapi.json` to `BACKEND_UPSTREAM`.
+
+## API integration
+
+All API calls use relative paths (`BASE_URL = ''` in `src/utils/constants.ts`). Same-origin requests go through Vite (dev) or nginx (Docker).
+
+No `VITE_*` build-time env vars — the API is always reached via `/api/...` on the same host as the UI.
+
+## Production
+
+For full-stack deployment, see [DEPLOYMENT.md](../DEPLOYMENT.md).
+
+Build manually:
+
+```bash
+npm run build   # output in dist/
 ```
