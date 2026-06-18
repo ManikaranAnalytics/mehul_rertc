@@ -42,7 +42,9 @@ No `VITE_*` build-time env vars — the API is always reached via `/api/...` on 
 
 ## Production
 
-For full-stack deployment, see [DEPLOYMENT.md](../DEPLOYMENT.md).
+See [DEPLOYMENT.md](./DEPLOYMENT.md) for full frontend deployment (Docker, nginx, EC2, operations).
+
+Full-stack: [../DEPLOYMENT.md](../DEPLOYMENT.md).
 
 Build manually:
 

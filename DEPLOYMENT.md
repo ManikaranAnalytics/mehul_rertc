@@ -9,8 +9,8 @@ Production runs **two app containers** plus PostgreSQL:
 ## Project layout
 
 ```
-backend/     FastAPI API, backend/docker-compose.yml for standalone API container
-frontend/    React SPA, frontend/docker-compose.yml for standalone UI container
+backend/     FastAPI API — see backend/DEPLOYMENT.md
+frontend/    React SPA — see frontend/DEPLOYMENT.md
 ```
 
 ## Deployment modes

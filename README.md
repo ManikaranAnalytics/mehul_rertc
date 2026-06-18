@@ -5,11 +5,13 @@ Monorepo for the Hindalco RTC dispatch optimizer.
 ```
 re_rtc/
 ├── backend/              # FastAPI API — port 8000
+│   ├── DEPLOYMENT.md
 │   ├── docker-compose.yml   # backend (+ optional Postgres) alone
 │   ├── Dockerfile
 │   ├── .env.example
 │   └── README.md
 ├── frontend/             # React + Vite UI
+│   ├── DEPLOYMENT.md
 │   ├── docker-compose.yml   # frontend alone
 │   ├── Dockerfile
 │   └── README.md
@@ -71,4 +73,5 @@ docker compose --env-file backend/.env up -d --build
 # http://localhost:8000 — nginx UI, /api → backend
 ```
 
+See [backend/DEPLOYMENT.md](./backend/DEPLOYMENT.md) and [frontend/DEPLOYMENT.md](./frontend/DEPLOYMENT.md) for per-service guides.
 See [DEPLOYMENT.md](./DEPLOYMENT.md) for AWS deployment.

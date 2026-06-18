@@ -72,4 +72,6 @@ See `.env.example` for the full list.
 
 ## Production
 
-For full-stack deployment (backend + frontend + Postgres), see the repo root [DEPLOYMENT.md](../DEPLOYMENT.md).
+See [DEPLOYMENT.md](./DEPLOYMENT.md) for full backend deployment (Docker, EC2, RDS, operations).
+
+Full-stack (backend + frontend + Postgres): [../DEPLOYMENT.md](../DEPLOYMENT.md).
