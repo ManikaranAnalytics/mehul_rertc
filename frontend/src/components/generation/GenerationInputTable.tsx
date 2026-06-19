@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { Calendar, Download, Upload } from 'lucide-react';
 import { useOptimizer } from '../../context/OptimizerContext';
 import {
