@@ -54,6 +54,8 @@ services:
       ADMIN_TOKEN_EXPIRE_HOURS: ${ADMIN_TOKEN_EXPIRE_HOURS:-12}
     extra_hosts:
       - "host.docker.internal:host-gateway"
+    networks:
+      - re-rtc-net
     depends_on:
       postgres:
         condition: service_healthy
@@ -64,6 +66,10 @@ services:
       timeout: 5s
       retries: 3
       start_period: 15s
+
+networks:
+  re-rtc-net:
+    name: re-rtc-net
 
 volumes:
   postgres_data:

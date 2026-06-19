@@ -25,7 +25,7 @@ fi
 # shellcheck disable=SC1090
 set -a && source "$ENV_FILE" && set +a
 FRONTEND_PORT="${FRONTEND_PORT:-8012}"
-BACKEND_UPSTREAM="${BACKEND_UPSTREAM:-http://host.docker.internal:9000}"
+BACKEND_UPSTREAM="${BACKEND_UPSTREAM:-http://re-rtc-backend:9000}"
 
 echo "▸ [1/3] Docker..."
 if ! command -v docker &>/dev/null; then

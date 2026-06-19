@@ -20,7 +20,7 @@ RUN chmod +x /docker-entrypoint.sh
 
 COPY --from=builder /app/dist /usr/share/nginx/html
 
-ENV BACKEND_UPSTREAM=http://host.docker.internal:9000
+ENV BACKEND_UPSTREAM=http://re-rtc-backend:9000
 
 EXPOSE 80
 

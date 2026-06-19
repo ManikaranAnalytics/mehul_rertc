@@ -17,7 +17,9 @@ services:
     env_file:
       - ../backend/.env
     environment:
-      BACKEND_UPSTREAM: ${BACKEND_UPSTREAM:-http://host.docker.internal:9000}
+      BACKEND_UPSTREAM: ${BACKEND_UPSTREAM:-http://re-rtc-backend:9000}
+    networks:
+      - re-rtc-net
     extra_hosts:
       - "host.docker.internal:host-gateway"
     healthcheck:
@@ -26,3 +28,8 @@ services:
       timeout: 5s
       retries: 3
       start_period: 10s
+
+networks:
+  re-rtc-net:
+    external: true
+    name: re-rtc-net

@@ -1,7 +1,7 @@
 #!/bin/sh
 set -e
 
-export BACKEND_UPSTREAM="${BACKEND_UPSTREAM:-http://host.docker.internal:9000}"
+export BACKEND_UPSTREAM="${BACKEND_UPSTREAM:-http://re-rtc-backend:9000}"
 
 envsubst '${BACKEND_UPSTREAM}' \
   < /etc/nginx/templates/default.conf.template \
