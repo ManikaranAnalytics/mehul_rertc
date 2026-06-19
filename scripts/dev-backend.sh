@@ -13,4 +13,4 @@ if [[ -f "$ROOT/backend/.env" ]]; then
   set +a
 fi
 export DEV_RELOAD="${DEV_RELOAD:-true}"
-exec python -m uvicorn main:app --host 0.0.0.0 --port "${PORT:-8000}" --reload
+exec python -m uvicorn main:app --host 0.0.0.0 --port "${PORT:-9000}" --reload

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Start Vite frontend dev server (proxies /api → localhost:8000)
+# Start Vite frontend dev server (proxies /api → localhost:9000)
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT/frontend"

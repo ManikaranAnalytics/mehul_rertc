@@ -22,14 +22,14 @@ RUN chmod +x /app/scripts/docker-entrypoint.sh
 
 USER appuser
 
-EXPOSE 8000
+EXPOSE 9000
 
-ENV PORT=8000 \
+ENV PORT=9000 \
     WEB_CONCURRENCY=2 \
     DEV_RELOAD=false \
     SERVE_FRONTEND=false
 
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
-  CMD python -c "import urllib.request; urllib.request.urlopen('http://localhost:8000/api/health')" || exit 1
+  CMD python -c "import urllib.request; urllib.request.urlopen('http://localhost:9000/api/health')" || exit 1
 
 ENTRYPOINT ["/app/scripts/docker-entrypoint.sh"]

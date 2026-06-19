@@ -1,19 +1,19 @@
 # RE-RTC Backend (FastAPI)
 
-FastAPI optimization API for the Hindalco RTC dispatch optimizer. Listens on port **8000**.
+FastAPI optimization API for the Hindalco RTC dispatch optimizer. Listens on port **9000**.
 
 ## Local development (no Docker)
 
 ```bash
 cp .env.example .env   # first time only
 cd backend
-../.venv/bin/uvicorn main:app --host 0.0.0.0 --port 8000 --reload
+../.venv/bin/uvicorn main:app --host 0.0.0.0 --port 9000 --reload
 ```
 
 - `backend/.env` is loaded automatically on startup (`python-dotenv`).
 - Use `../.venv/bin/uvicorn` — system Python may not have project dependencies.
-- API docs: http://localhost:8000/docs
-- Health: http://localhost:8000/api/health
+- API docs: http://localhost:9000/docs
+- Health: http://localhost:9000/api/health
 
 ### PostgreSQL
 
@@ -49,7 +49,7 @@ cp .env.example .env
 docker compose --env-file .env up -d --build
 ```
 
-API at http://localhost:8000
+API at http://localhost:9000
 
 **With bundled Postgres:**
 
@@ -64,7 +64,7 @@ When the backend container talks to Postgres on your Mac (not in Docker), set `D
 | Variable | Default | Notes |
 |----------|---------|-------|
 | `DATABASE_URL` | — | PostgreSQL connection string |
-| `PORT` | `8000` | Uvicorn listen port |
+| `PORT` | `9000` | Uvicorn listen port |
 | `WEB_CONCURRENCY` | `2` | Workers in Docker |
 | `ALLOWED_ORIGINS` | `*` | CORS |
 | `ADMIN_USERNAME` | `admin` | Admin panel login |

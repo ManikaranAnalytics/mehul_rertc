@@ -76,7 +76,7 @@ else:
         }
 
 if __name__ == "__main__":
-    port = int(os.getenv("PORT", 8000))
+    port = int(os.getenv("PORT", 9000))
     # Single worker + reload in dev so schema/code changes apply without a manual restart
     workers = int(os.getenv("WEB_CONCURRENCY", 1))
     use_reload = os.getenv("DEV_RELOAD", "true").lower() in ("1", "true", "yes")

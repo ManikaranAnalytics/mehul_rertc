@@ -2,7 +2,7 @@
 # Uses remote Postgres via DATABASE_URL in .env (default).
 #
 #   docker compose --env-file .env up -d --build
-#     → API at http://localhost:8000
+#     → API at http://localhost:9000
 #
 # Optional local Postgres (dev only):
 #   DB_HOST=postgres docker compose --env-file .env --profile db up -d --build
@@ -38,11 +38,11 @@ services:
     container_name: re-rtc-backend
     restart: unless-stopped
     ports:
-      - "${BACKEND_BIND:-127.0.0.1}:${PORT:-8000}:8000"
+      - "${BACKEND_BIND:-127.0.0.1}:${PORT:-9000}:${PORT:-9000}"
     env_file:
       - .env
     environment:
-      PORT: 8000
+      PORT: ${PORT:-9000}
       WEB_CONCURRENCY: ${WEB_CONCURRENCY:-2}
       DEV_RELOAD: "false"
       SERVE_FRONTEND: "false"
@@ -59,7 +59,7 @@ services:
         condition: service_healthy
         required: false
     healthcheck:
-      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/api/health')"]
+      test: ["CMD", "python", "-c", "import os,urllib.request; urllib.request.urlopen(f'http://localhost:{os.getenv(\"PORT\",\"9000\")}/api/health')"]
       interval: 30s
       timeout: 5s
       retries: 3

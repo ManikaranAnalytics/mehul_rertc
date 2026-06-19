@@ -17,7 +17,7 @@ services:
     env_file:
       - ../backend/.env
     environment:
-      BACKEND_UPSTREAM: ${BACKEND_UPSTREAM:-http://host.docker.internal:8000}
+      BACKEND_UPSTREAM: ${BACKEND_UPSTREAM:-http://host.docker.internal:9000}
     extra_hosts:
       - "host.docker.internal:host-gateway"
     healthcheck:

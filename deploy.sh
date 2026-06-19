@@ -25,7 +25,7 @@ fi
 # shellcheck disable=SC1090
 set -a && source "$ENV_FILE" && set +a
 FRONTEND_PORT="${FRONTEND_PORT:-8000}"
-BACKEND_UPSTREAM="${BACKEND_UPSTREAM:-http://host.docker.internal:8000}"
+BACKEND_UPSTREAM="${BACKEND_UPSTREAM:-http://host.docker.internal:9000}"
 
 echo "▸ [1/3] Docker..."
 if ! command -v docker &>/dev/null; then
@@ -33,7 +33,7 @@ if ! command -v docker &>/dev/null; then
   exit 1
 fi
 
-echo "▸ [2/3] Backend (API :8000, DB from DATABASE_URL)..."
+echo "▸ [2/3] Backend (API :${PORT:-9000}, DB from DATABASE_URL)..."
 (cd "$APP_DIR/backend" && docker compose --env-file .env up -d --build)
 
 echo "▸ [3/3] Frontend (public :${FRONTEND_PORT})..."

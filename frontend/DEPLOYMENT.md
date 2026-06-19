@@ -36,9 +36,9 @@ npm install          # first time
 npm run dev -- --host 0.0.0.0
 ```
 
-Open http://localhost:5173 — Vite proxies `/api` → http://localhost:8000.
+Open http://localhost:5173 — Vite proxies `/api` → http://localhost:9000.
 
-**Requires backend** on port 8000. See [../backend/DEPLOYMENT.md](../backend/DEPLOYMENT.md).
+**Requires backend** on port 9000. See [../backend/DEPLOYMENT.md](../backend/DEPLOYMENT.md).
 
 If `npm` is missing, use Node 20+ or the portable Node under repo `.tools/`.
 
@@ -55,19 +55,19 @@ docker compose --env-file ../backend/.env up -d --build
 - UI: http://localhost:8000 (`FRONTEND_PORT` in `backend/.env`, default `8000`)
 - Image: `re-rtc-frontend:latest`
 - Container: `re-rtc-frontend`
-- Default `BACKEND_UPSTREAM`: `http://host.docker.internal:8000` (from `backend/.env`)
+- Default `BACKEND_UPSTREAM`: `http://host.docker.internal:9000` (from `backend/.env`)
 
 ### Custom backend URL
 
 ```bash
-BACKEND_UPSTREAM=http://host.docker.internal:8000 docker compose up -d --build
+BACKEND_UPSTREAM=http://host.docker.internal:9000 docker compose up -d --build
 ```
 
 | `BACKEND_UPSTREAM` | When to use |
 |--------------------|-------------|
-| `http://host.docker.internal:8000` | Backend on host or publishing port 8000 — **Mac/Windows Docker** |
-| `http://172.17.0.1:8000` | Backend on host — **Linux Docker** |
-| `http://backend:8000` | Backend on same Docker network (root full-stack compose) |
+| `http://host.docker.internal:9000` | Backend on host or publishing port 9000 — **Mac/Windows Docker** |
+| `http://172.17.0.1:9000` | Backend on host — **Linux Docker** |
+| `http://backend:9000` | Backend on same Docker network (root full-stack compose) |
 | `https://api.yourdomain.com` | Remote backend (ensure CORS / HTTPS as needed) |
 
 ### Build image manually
@@ -75,7 +75,7 @@ BACKEND_UPSTREAM=http://host.docker.internal:8000 docker compose up -d --build
 ```bash
 docker build -t re-rtc-frontend:latest .
 docker run --rm -p 3000:80 \
-  -e BACKEND_UPSTREAM=http://host.docker.internal:8000 \
+  -e BACKEND_UPSTREAM=http://host.docker.internal:9000 \
   --add-host=host.docker.internal:host-gateway \
   re-rtc-frontend:latest
 ```
@@ -84,7 +84,7 @@ docker run --rm -p 3000:80 \
 
 ## 3. Production (full stack on one host)
 
-Both services share `backend/.env` (remote `DATABASE_URL`, `FRONTEND_PORT=8000`, `BACKEND_BIND=127.0.0.1`):
+Both services share `backend/.env` (remote `DATABASE_URL`, `PORT=9000`, `FRONTEND_PORT=8000`, `BACKEND_BIND=127.0.0.1`):
 
 ```bash
 cd backend && docker compose --env-file .env up -d --build
@@ -97,7 +97,7 @@ Or from repo root:
 bash deploy.sh
 ```
 
-Public URL: http://`<host>`:8000 (frontend nginx; `/api` → backend on localhost:8000)
+Public URL: http://`<host>`:8000 (frontend nginx; `/api` → backend on localhost:9000)
 
 ---
 

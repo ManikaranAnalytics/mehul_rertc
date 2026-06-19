@@ -1,6 +1,6 @@
 # Backend Deployment Guide
 
-FastAPI optimization API for the RE-RTC Dispatch Optimizer. Default port **8000**.
+FastAPI optimization API for the RE-RTC Dispatch Optimizer. Default port **9000**.
 
 For full-stack (backend + frontend + Postgres on EC2), deploy each service from its own folder — see sections below.
 
@@ -41,13 +41,13 @@ The app loads `backend/.env` automatically on startup (`python-dotenv`). Docker 
 
 ```bash
 cd backend
-../.venv/bin/uvicorn main:app --host 0.0.0.0 --port 8000 --reload
+../.venv/bin/uvicorn main:app --host 0.0.0.0 --port 9000 --reload
 ```
 
 - Use `../.venv/bin/uvicorn` — system Python may lack dependencies.
-- API docs: http://localhost:8000/docs
-- Health: http://localhost:8000/api/health
-- DB health: http://localhost:8000/api/state/health
+- API docs: http://localhost:9000/docs
+- Health: http://localhost:9000/api/health
+- DB health: http://localhost:9000/api/state/health
 
 ### PostgreSQL (local)
 
@@ -78,12 +78,12 @@ Run from `backend/`:
 docker compose --env-file .env up -d --build
 ```
 
-- API: http://localhost:8000 (or `127.0.0.1:8000` when `BACKEND_BIND=127.0.0.1`)
+- API: http://localhost:9000 (or `127.0.0.1:9000` when `BACKEND_BIND=127.0.0.1`)
 - Image: `re-rtc-backend:latest`
 - Container: `re-rtc-backend`
 - Uses `DATABASE_URL` from `.env` (remote Postgres by default)
 
-When deploying with the frontend on the same host, keep `BACKEND_BIND=127.0.0.1` and `FRONTEND_PORT=8000` in `.env` so the UI is public on :8000 and the API is localhost-only (nginx proxies `/api`).
+When deploying with the frontend on the same host, keep `BACKEND_BIND=127.0.0.1`, `PORT=9000`, and `FRONTEND_PORT=8000` in `.env` so the UI is public on :8000 and the API is localhost-only on :9000 (nginx proxies `/api`).
 
 ### With bundled Postgres
 
@@ -107,7 +107,7 @@ The compose file sets `extra_hosts: host.docker.internal:host-gateway` for this.
 
 ```bash
 docker build -t re-rtc-backend:latest .
-docker run --rm -p 8000:8000 --env-file .env re-rtc-backend:latest
+docker run --rm -p 9000:9000 --env-file .env re-rtc-backend:latest
 ```
 
 ---
@@ -132,10 +132,10 @@ Public URL: http://`<host>`:8000
 ## 5. Verify deployment
 
 ```bash
-curl http://localhost:8000/api/health
+curl http://localhost:9000/api/health
 # {"status":"ok"}
 
-curl http://localhost:8000/api/state/health
+curl http://localhost:9000/api/state/health
 # DB connectivity status
 ```
 
@@ -179,4 +179,4 @@ docker compose down
 | `ModuleNotFoundError` locally | Use `../.venv/bin/uvicorn`, not system Python |
 | DB not reachable in container | Use `@postgres` (bundled) or `@host.docker.internal` (host Postgres) |
 | Persistence API returns 503 | Set `DATABASE_URL` in `.env` or compose `environment` |
-| Port 8000 in use | Stop other uvicorn/Docker instances or change `PORT` |
+| Port 9000 in use | Stop other uvicorn/Docker instances or change `PORT` |

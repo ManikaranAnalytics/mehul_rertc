@@ -1,5 +1,5 @@
 // In production the frontend is served by FastAPI on the same origin → use relative URLs.
-// In Vite dev mode (port 5173) Vite proxies /api to port 8000, so empty string still works.
+# In Vite dev mode (port 5173) Vite proxies /api to port 9000, so empty string still works.
 export const BASE_URL = '';
 
 /** PSP max storage slider ceiling (MWh) */
