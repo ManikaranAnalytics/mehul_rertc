@@ -83,7 +83,7 @@ docker compose --env-file .env up -d --build
 - Container: `re-rtc-backend`
 - Uses `DATABASE_URL` from `.env` (remote Postgres by default)
 
-When deploying with the frontend on the same host, keep `BACKEND_BIND=127.0.0.1`, `PORT=9000`, and `FRONTEND_PORT=8000` in `.env` so the UI is public on :8000 and the API is localhost-only on :9000 (nginx proxies `/api`).
+When deploying with the frontend on the same host, keep `BACKEND_BIND=127.0.0.1`, `PORT=9000`, and `FRONTEND_PORT=8012` in `.env` so the UI is public on :8012 and the API is localhost-only on :9000 (nginx proxies `/api`).
 
 ### With bundled Postgres
 
@@ -125,7 +125,7 @@ cd backend && docker compose --env-file .env up -d --build
 cd frontend && docker compose --env-file ../backend/.env up -d --build
 ```
 
-Public URL: http://`<host>`:8000
+Public URL: http://`<host>`:8012
 
 ---
 

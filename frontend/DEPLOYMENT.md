@@ -52,7 +52,7 @@ Run from `frontend/` (reads `backend/.env` for ports):
 docker compose --env-file ../backend/.env up -d --build
 ```
 
-- UI: http://localhost:8000 (`FRONTEND_PORT` in `backend/.env`, default `8000`)
+- UI: http://localhost:8012 (`FRONTEND_PORT` in `backend/.env`, default `8012`)
 - Image: `re-rtc-frontend:latest`
 - Container: `re-rtc-frontend`
 - Default `BACKEND_UPSTREAM`: `http://host.docker.internal:9000` (from `backend/.env`)
@@ -84,7 +84,7 @@ docker run --rm -p 3000:80 \
 
 ## 3. Production (full stack on one host)
 
-Both services share `backend/.env` (remote `DATABASE_URL`, `PORT=9000`, `FRONTEND_PORT=8000`, `BACKEND_BIND=127.0.0.1`):
+Both services share `backend/.env` (remote `DATABASE_URL`, `PORT=9000`, `FRONTEND_PORT=8012`, `BACKEND_BIND=127.0.0.1`):
 
 ```bash
 cd backend && docker compose --env-file .env up -d --build
@@ -97,7 +97,7 @@ Or from repo root:
 bash deploy.sh
 ```
 
-Public URL: http://`<host>`:8000 (frontend nginx; `/api` → backend on localhost:9000)
+Public URL: http://`<host>`:8012 (frontend nginx; `/api` → backend on localhost:9000)
 
 ---
 

@@ -4,7 +4,7 @@
 #   cp backend/.env.example backend/.env   # set DATABASE_URL + secrets
 #   bash deploy.sh
 #
-# App URL: http://<host>:8000  (frontend nginx, /api → backend)
+# App URL: http://<host>:8012  (frontend nginx, /api → backend)
 set -euo pipefail
 
 APP_DIR="$(cd "$(dirname "$0")" && pwd)"
@@ -24,7 +24,7 @@ fi
 
 # shellcheck disable=SC1090
 set -a && source "$ENV_FILE" && set +a
-FRONTEND_PORT="${FRONTEND_PORT:-8000}"
+FRONTEND_PORT="${FRONTEND_PORT:-8012}"
 BACKEND_UPSTREAM="${BACKEND_UPSTREAM:-http://host.docker.internal:9000}"
 
 echo "▸ [1/3] Docker..."

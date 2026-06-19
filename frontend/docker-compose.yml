@@ -1,8 +1,8 @@
 # Frontend — run from frontend/ directory.
-# Uses backend/.env for FRONTEND_PORT (default 8000).
+# Uses backend/.env for FRONTEND_PORT (default 8012).
 #
 #   docker compose --env-file ../backend/.env up -d --build
-#     → UI at http://localhost:8000 (proxies /api to backend)
+#     → UI at http://localhost:8012 (proxies /api to backend)
 
 services:
   frontend:
@@ -13,7 +13,7 @@ services:
     container_name: re-rtc-frontend
     restart: unless-stopped
     ports:
-      - "${FRONTEND_PORT:-8000}:80"
+      - "${FRONTEND_PORT:-8012}:80"
     env_file:
       - ../backend/.env
     environment:
