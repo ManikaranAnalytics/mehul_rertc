@@ -2,7 +2,7 @@
 
 FastAPI optimization API for the RE-RTC Dispatch Optimizer. Default port **8000**.
 
-For full-stack (backend + frontend + Postgres on EC2), see [../DEPLOYMENT.md](../DEPLOYMENT.md).
+For full-stack (backend + frontend + Postgres on EC2), deploy each service from its own folder — see sections below.
 
 ---
 
@@ -57,7 +57,11 @@ cd backend
 DATABASE_URL=postgresql+psycopg://re_rtc@localhost:5432/re_rtc
 ```
 
-**Option B — portable Postgres (macOS dev scripts)**
+**Option B — remote managed Postgres**
+
+Host `13.235.110.27`, database `rertc`, user `rertc`. Access is IP-restricted — your public IP must be whitelisted. URL-encode `@` in passwords as `%40` in `DATABASE_URL`.
+
+**Option C — portable Postgres (macOS dev scripts)**
 
 ```bash
 bash scripts/setup_postgres.sh   # first time
@@ -74,9 +78,12 @@ Run from `backend/`:
 docker compose --env-file .env up -d --build
 ```
 
-- API: http://localhost:8000
+- API: http://localhost:8000 (or `127.0.0.1:8000` when `BACKEND_BIND=127.0.0.1`)
 - Image: `re-rtc-backend:latest`
-- Container: `re-rtc-backend-local`
+- Container: `re-rtc-backend`
+- Uses `DATABASE_URL` from `.env` (remote Postgres by default)
+
+When deploying with the frontend on the same host, keep `BACKEND_BIND=127.0.0.1` and `FRONTEND_PORT=8000` in `.env` so the UI is public on :8000 and the API is localhost-only (nginx proxies `/api`).
 
 ### With bundled Postgres
 
@@ -105,24 +112,20 @@ docker run --rm -p 8000:8000 --env-file .env re-rtc-backend:latest
 
 ---
 
-## 4. Production (as part of full stack)
+## 4. Production (full stack on one host)
 
-From repo root:
+Uses remote Postgres via `DATABASE_URL` in `backend/.env` (local data already migrated).
 
 ```bash
-cp backend/.env.example backend/.env   # edit secrets
-docker compose --env-file backend/.env up -d --build
+# From repo root
+bash deploy.sh
+
+# Or manually
+cd backend && docker compose --env-file .env up -d --build
+cd frontend && docker compose --env-file ../backend/.env up -d --build
 ```
 
-In full-stack compose:
-
-- Backend is **not** published to the host — only `expose: 8000` on the Docker network.
-- Frontend nginx proxies `/api/` → `http://backend:8000`.
-- `DATABASE_URL` is overridden to `@postgres:5432` when using bundled Postgres.
-
-**RDS / external DB:** use [../docker-compose.app-only.yml](../docker-compose.app-only.yml).
-
-**EC2 one-shot:** run [../deploy.sh](../deploy.sh) from repo root.
+Public URL: http://`<host>`:8000
 
 ---
 
@@ -143,11 +146,8 @@ Create admin users at `/admin/login`, then use **User Management** to add app us
 ## 6. Operations
 
 ```bash
-# Logs (standalone)
-docker compose logs -f backend
-
-# Logs (full stack, from repo root)
-docker compose --env-file backend/.env logs -f backend
+# Logs (standalone, from backend/)
+docker compose --env-file .env logs -f backend
 
 # Restart after .env change
 docker compose --env-file .env up -d --build

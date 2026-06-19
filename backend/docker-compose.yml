@@ -1,30 +1,30 @@
-# Standalone backend — run from backend/ directory.
+# Backend — run from backend/ directory.
+# Uses remote Postgres via DATABASE_URL in .env (default).
 #
 #   docker compose --env-file .env up -d --build
-#     → API at http://localhost:8000 (uses DATABASE_URL from .env; for host Postgres
-#       on Mac use @host.docker.internal in DATABASE_URL)
+#     → API at http://localhost:8000
 #
+# Optional local Postgres (dev only):
 #   DB_HOST=postgres docker compose --env-file .env --profile db up -d --build
-#     → API + bundled Postgres container
 
 services:
   postgres:
     profiles: ["db"]
     image: postgres:16-alpine
-    container_name: re-rtc-postgres-local
+    container_name: re-rtc-postgres
     restart: unless-stopped
     env_file:
       - .env
     environment:
-      POSTGRES_USER: ${POSTGRES_USER:-re_rtc}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-re_rtc_secret}
-      POSTGRES_DB: ${POSTGRES_DB:-re_rtc}
+      POSTGRES_USER: ${LOCAL_POSTGRES_USER:-re_rtc}
+      POSTGRES_PASSWORD: ${LOCAL_POSTGRES_PASSWORD:-re_rtc_secret}
+      POSTGRES_DB: ${LOCAL_POSTGRES_DB:-re_rtc}
     ports:
-      - "${POSTGRES_PORT:-5432}:5432"
+      - "${LOCAL_POSTGRES_PORT:-5432}:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-re_rtc} -d ${POSTGRES_DB:-re_rtc}"]
+      test: ["CMD-SHELL", "pg_isready -U ${LOCAL_POSTGRES_USER:-re_rtc} -d ${LOCAL_POSTGRES_DB:-re_rtc}"]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -35,10 +35,10 @@ services:
       context: .
       dockerfile: Dockerfile
     image: re-rtc-backend:latest
-    container_name: re-rtc-backend-local
+    container_name: re-rtc-backend
     restart: unless-stopped
     ports:
-      - "${PORT:-8000}:8000"
+      - "${BACKEND_BIND:-127.0.0.1}:${PORT:-8000}:8000"
     env_file:
       - .env
     environment:
@@ -47,9 +47,9 @@ services:
       DEV_RELOAD: "false"
       SERVE_FRONTEND: "false"
       ALLOWED_ORIGINS: ${ALLOWED_ORIGINS:-*}
-      DATABASE_URL: ${DATABASE_URL:-postgresql+psycopg://${POSTGRES_USER:-re_rtc}:${POSTGRES_PASSWORD:-re_rtc_secret}@${DB_HOST:-host.docker.internal}:${POSTGRES_PORT:-5432}/${POSTGRES_DB:-re_rtc}}
+      DATABASE_URL: ${DATABASE_URL}
       ADMIN_USERNAME: ${ADMIN_USERNAME:-admin}
-      ADMIN_PASSWORD: ${ADMIN_PASSWORD:-12345}
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD:-admin}
       ADMIN_JWT_SECRET: ${ADMIN_JWT_SECRET:-change-me-to-a-long-random-secret}
       ADMIN_TOKEN_EXPIRE_HOURS: ${ADMIN_TOKEN_EXPIRE_HOURS:-12}
     extra_hosts:

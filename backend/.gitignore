@@ -21,6 +21,10 @@ __pycache__/
 # Uploaded / generated spreadsheets (not shipped in repo)
 *.xlsx
 
+# Local DB dumps (may contain user data)
+data/local_re_rtc_dump.sql
+*.dump
+
 # OS
 .DS_Store
 Thumbs.db

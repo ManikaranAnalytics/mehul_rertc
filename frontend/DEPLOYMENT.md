@@ -2,7 +2,7 @@
 
 React + Vite SPA served by **nginx** in production. Proxies `/api/`, `/docs`, and `/openapi.json` to the backend.
 
-For full-stack EC2 deployment, see [../DEPLOYMENT.md](../DEPLOYMENT.md).
+For full-stack EC2 deployment, see [backend/DEPLOYMENT.md](../backend/DEPLOYMENT.md) and this file.
 
 ---
 
@@ -46,16 +46,16 @@ If `npm` is missing, use Node 20+ or the portable Node under repo `.tools/`.
 
 ## 2. Docker — frontend only
 
-Run from `frontend/`:
+Run from `frontend/` (reads `backend/.env` for ports):
 
 ```bash
-docker compose up -d --build
+docker compose --env-file ../backend/.env up -d --build
 ```
 
-- UI: http://localhost:3000 (override with `FRONTEND_PORT`)
+- UI: http://localhost:8000 (`FRONTEND_PORT` in `backend/.env`, default `8000`)
 - Image: `re-rtc-frontend:latest`
-- Container: `re-rtc-frontend-local`
-- Default `BACKEND_UPSTREAM`: `http://host.docker.internal:8000`
+- Container: `re-rtc-frontend`
+- Default `BACKEND_UPSTREAM`: `http://host.docker.internal:8000` (from `backend/.env`)
 
 ### Custom backend URL
 
@@ -82,19 +82,22 @@ docker run --rm -p 3000:80 \
 
 ---
 
-## 3. Production (as part of full stack)
+## 3. Production (full stack on one host)
 
-From repo root:
+Both services share `backend/.env` (remote `DATABASE_URL`, `FRONTEND_PORT=8000`, `BACKEND_BIND=127.0.0.1`):
 
 ```bash
-docker compose --env-file backend/.env up -d --build
+cd backend && docker compose --env-file .env up -d --build
+cd frontend && docker compose --env-file ../backend/.env up -d --build
 ```
 
-- Public URL: http://`<host>`:8000 (maps to frontend nginx port 80)
-- Compose sets `BACKEND_UPSTREAM=http://backend:8000` automatically
-- Backend is internal only — not exposed to the host
+Or from repo root:
 
-**EC2:** run [../deploy.sh](../deploy.sh) from repo root.
+```bash
+bash deploy.sh
+```
+
+Public URL: http://`<host>`:8000 (frontend nginx; `/api` → backend on localhost:8000)
 
 ---
 
@@ -142,11 +145,8 @@ Open the UI in a browser and log in at `/login`.
 ## 7. Operations
 
 ```bash
-# Logs (standalone)
+# Logs (standalone, from frontend/)
 docker compose logs -f frontend
-
-# Logs (full stack, from repo root)
-docker compose --env-file backend/.env logs -f frontend
 
 # Rebuild after code changes
 docker compose up -d --build

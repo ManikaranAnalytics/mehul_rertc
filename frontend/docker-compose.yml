@@ -1,8 +1,8 @@
-# Standalone frontend — run from frontend/ directory.
-# Requires a running backend (host uvicorn, backend container, or remote API).
+# Frontend — run from frontend/ directory.
+# Uses backend/.env for FRONTEND_PORT (default 8000).
 #
-#   BACKEND_UPSTREAM=http://host.docker.internal:8000 docker compose up -d --build
-#     → UI at http://localhost:3000
+#   docker compose --env-file ../backend/.env up -d --build
+#     → UI at http://localhost:8000 (proxies /api to backend)
 
 services:
   frontend:
@@ -10,10 +10,12 @@ services:
       context: .
       dockerfile: Dockerfile
     image: re-rtc-frontend:latest
-    container_name: re-rtc-frontend-local
+    container_name: re-rtc-frontend
     restart: unless-stopped
     ports:
-      - "${FRONTEND_PORT:-3000}:80"
+      - "${FRONTEND_PORT:-8000}:80"
+    env_file:
+      - ../backend/.env
     environment:
       BACKEND_UPSTREAM: ${BACKEND_UPSTREAM:-http://host.docker.internal:8000}
     extra_hosts:

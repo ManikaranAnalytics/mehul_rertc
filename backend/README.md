@@ -17,11 +17,21 @@ cd backend
 
 ### PostgreSQL
 
-Use a local Postgres instance or the bundled Docker profile (below). Example `DATABASE_URL` in `.env`:
+Use a local Postgres instance or the bundled Docker profile (below).
+
+**Local dev:**
 
 ```
 DATABASE_URL=postgresql+psycopg://re_rtc@localhost:5432/re_rtc
 ```
+
+**Remote managed Postgres** (IP must be whitelisted on the server):
+
+```
+DATABASE_URL=postgresql+psycopg://rertc:YOUR_PASSWORD@13.235.110.27:5432/rertc
+```
+
+URL-encode special characters in the password (`@` → `%40`).
 
 Optional macOS portable Postgres scripts (repo root `.tools/` + `.pgdata/`):
 
@@ -74,4 +84,4 @@ See `.env.example` for the full list.
 
 See [DEPLOYMENT.md](./DEPLOYMENT.md) for full backend deployment (Docker, EC2, RDS, operations).
 
-Full-stack (backend + frontend + Postgres): [../DEPLOYMENT.md](../DEPLOYMENT.md).
+Full-stack: deploy [frontend/DEPLOYMENT.md](../frontend/DEPLOYMENT.md) and this guide on the same host.
