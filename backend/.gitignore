@@ -10,10 +10,7 @@ __pycache__/
 # Local venv (if created inside backend/)
 .venv/
 
-# Env secrets
-.env
-.env.*
-!.env.example
+
 
 # Logs
 *.log
