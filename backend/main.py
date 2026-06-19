@@ -58,14 +58,18 @@ _FRONTEND_DIST_DEFAULT = os.path.normpath(
 FRONTEND_DIST = os.path.abspath(os.getenv("FRONTEND_DIST", _FRONTEND_DIST_DEFAULT))
 
 if _SERVE_FRONTEND and os.path.isdir(FRONTEND_DIST):
-    # Mount the entire dist directory — StaticFiles with html=True serves
-    # index.html as fallback for any path not matched by an API route,
-    # which is exactly what a SPA (React Router) needs.
-    app.mount(
-        "/",
-        StaticFiles(directory=FRONTEND_DIST, html=True),
-        name="frontend",
-    )
+    from pathlib import Path
+
+    _dist = Path(FRONTEND_DIST)
+    _assets = _dist / "assets"
+    if _assets.is_dir():
+        app.mount("/assets", StaticFiles(directory=str(_assets)), name="static-assets")
+
+    @app.get("/{spa_path:path}")
+    async def serve_spa(spa_path: str):
+        if spa_path and (_dist / spa_path).is_file():
+            return FileResponse(_dist / spa_path)
+        return FileResponse(_dist / "index.html")
 else:
     @app.get("/")
     def read_root():
