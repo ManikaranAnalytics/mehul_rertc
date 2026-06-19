@@ -1,11 +1,11 @@
-# Backend — run from backend/ directory.
-# Uses remote Postgres via DATABASE_URL in .env (default).
+# Backend only — serves API + React SPA on one port (no nginx).
+# Build context is repo root (bundles frontend/dist into the image).
 #
 #   docker compose --env-file .env up -d --build
-#     → API at http://localhost:9000
+#     → http://<host>:8012  (UI + /api)
 #
 # Optional local Postgres (dev only):
-#   DB_HOST=postgres docker compose --env-file .env --profile db up -d --build
+#   docker compose --env-file .env --profile db up -d --build
 
 services:
   postgres:
@@ -32,20 +32,21 @@ services:
 
   backend:
     build:
-      context: .
-      dockerfile: Dockerfile
+      context: ..
+      dockerfile: backend/Dockerfile
     image: re-rtc-backend:latest
     container_name: re-rtc-backend
     restart: unless-stopped
     ports:
-      - "${BACKEND_BIND:-127.0.0.1}:${PORT:-9000}:${PORT:-9000}"
+      - "${BACKEND_BIND:-0.0.0.0}:${PORT:-8012}:${PORT:-8012}"
     env_file:
       - .env
     environment:
-      PORT: ${PORT:-9000}
+      PORT: ${PORT:-8012}
       WEB_CONCURRENCY: ${WEB_CONCURRENCY:-2}
       DEV_RELOAD: "false"
-      SERVE_FRONTEND: "false"
+      SERVE_FRONTEND: "true"
+      FRONTEND_DIST: /app/frontend/dist
       ALLOWED_ORIGINS: ${ALLOWED_ORIGINS:-*}
       DATABASE_URL: ${DATABASE_URL}
       ADMIN_USERNAME: ${ADMIN_USERNAME:-admin}
@@ -54,22 +55,16 @@ services:
       ADMIN_TOKEN_EXPIRE_HOURS: ${ADMIN_TOKEN_EXPIRE_HOURS:-12}
     extra_hosts:
       - "host.docker.internal:host-gateway"
-    networks:
-      - re-rtc-net
     depends_on:
       postgres:
         condition: service_healthy
         required: false
     healthcheck:
-      test: ["CMD", "python", "-c", "import os,urllib.request; urllib.request.urlopen(f'http://localhost:{os.getenv(\"PORT\",\"9000\")}/api/health')"]
+      test: ["CMD", "python", "-c", "import os,urllib.request; urllib.request.urlopen(f'http://localhost:{os.getenv(\"PORT\",\"8012\")}/api/health')"]
       interval: 30s
       timeout: 5s
       retries: 3
-      start_period: 15s
-
-networks:
-  re-rtc-net:
-    name: re-rtc-net
+      start_period: 20s
 
 volumes:
   postgres_data:

@@ -1,7 +1,7 @@
 #!/bin/sh
 set -e
 
-PORT="${PORT:-9000}"
+PORT="${PORT:-8012}"
 WORKERS="${WEB_CONCURRENCY:-2}"
 
 exec python -m uvicorn main:app \

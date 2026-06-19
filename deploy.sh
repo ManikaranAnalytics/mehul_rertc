@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
-# Deploy backend + frontend on EC2 (both use backend/.env)
+# Deploy single-container app on EC2 (FastAPI serves UI + API, no nginx).
 #
-#   cp backend/.env.example backend/.env   # set DATABASE_URL + secrets
+#   cp backend/.env.example backend/.env
 #   bash deploy.sh
 #
-# App URL: http://<host>:8012  (frontend nginx, /api → backend)
+# App URL: http://<host>:8012
 set -euo pipefail
 
 APP_DIR="$(cd "$(dirname "$0")" && pwd)"
@@ -12,7 +12,7 @@ ENV_FILE="$APP_DIR/backend/.env"
 
 echo ""
 echo "════════════════════════════════════════════════════"
-echo "  RE-RTC — Deploy backend + frontend"
+echo "  RE-RTC — Deploy (single container, no nginx)"
 echo "════════════════════════════════════════════════════"
 echo ""
 
@@ -24,28 +24,27 @@ fi
 
 # shellcheck disable=SC1090
 set -a && source "$ENV_FILE" && set +a
-FRONTEND_PORT="${FRONTEND_PORT:-8012}"
-BACKEND_UPSTREAM="${BACKEND_UPSTREAM:-http://re-rtc-backend:9000}"
+APP_PORT="${PORT:-8012}"
 
-echo "▸ [1/3] Docker..."
+echo "▸ [1/2] Docker..."
 if ! command -v docker &>/dev/null; then
   echo "Install Docker first: https://docs.docker.com/engine/install/"
   exit 1
 fi
 
-echo "▸ [2/3] Backend (API :${PORT:-9000}, DB from DATABASE_URL)..."
-(cd "$APP_DIR/backend" && docker compose --env-file .env up -d --build)
+echo "▸ [2/3] Stop legacy nginx frontend (if any)..."
+(cd "$APP_DIR/frontend" && docker compose --env-file ../backend/.env down 2>/dev/null || true)
 
-echo "▸ [3/3] Frontend (public :${FRONTEND_PORT})..."
-(cd "$APP_DIR/frontend" && docker compose --env-file ../backend/.env up -d --build)
+echo "▸ [3/3] Backend + UI on :${APP_PORT}..."
+(cd "$APP_DIR/backend" && docker compose --env-file .env up -d --build)
 
 PUBLIC_IP="$(curl -sf --max-time 2 http://169.254.169.254/latest/meta-data/public-ipv4 2>/dev/null || hostname -I | awk '{print $1}')"
 
 echo ""
 echo "════════════════════════════════════════════════════"
 echo "  ✓ Done"
-echo "  App     : http://${PUBLIC_IP}:${FRONTEND_PORT}"
-echo "  Health  : http://${PUBLIC_IP}:${FRONTEND_PORT}/api/health"
-echo "  Backend : cd backend && docker compose logs -f backend"
-echo "  Frontend: cd frontend && docker compose logs -f frontend"
+echo "  App     : http://${PUBLIC_IP}:${APP_PORT}"
+echo "  Login   : http://${PUBLIC_IP}:${APP_PORT}/login"
+echo "  Health  : http://${PUBLIC_IP}:${APP_PORT}/api/health"
+echo "  Logs    : cd backend && docker compose logs -f backend"
 echo "════════════════════════════════════════════════════"
