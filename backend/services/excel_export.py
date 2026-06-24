@@ -264,10 +264,8 @@ def _disp(ws, curtailment_start_block=37, curtailment_end_block=64,
         # All other blocks: SoC start = SoC end of previous block
         soc_s = f"={ISOC}" if r == 3 else f"K{pr}"
         fc("H",f"={soc_s}",                   fmt="0.0", fg="818CF8")
-        # Discharge loss factor = 1/(1 - LOSS/100)
-        dlf = f"1/(1-{LOSS}/100)"
-        # available SOC for discharge (MW)
-        avail = f"H{r}/(0.25*{dlf})"
+        # available SOC for discharge (MW): 1 MWh SoC → 4 MW for 15 min
+        avail = f"H{r}/0.25"
         # raw discharge before CERC bump
         raw_d = f"MIN(G{r}-F{r},50,{avail})"
         # CERC Option A: bump sub-threshold discharge to MinDispatchMW
@@ -277,9 +275,9 @@ def _disp(ws, curtailment_start_block=37, curtailment_end_block=64,
            fmt="0.00",fg=PSPD)
         fc("J",(f"=IF(F{r}>{RTC},"
                 f"MIN(F{r}-{RTC},60,"
-                f"({MAXS}-MAX(0,H{r}-I{r}*0.25*{dlf}))/0.25),0)"),
+                f"({MAXS}-H{r})/(0.25*(1-{LOSS}/100))),0)"),
            fmt="0.00",fg=PSPC)
-        fc("K",f"=MIN({MAXS},MAX(0,H{r}-I{r}*0.25*{dlf})+J{r}*0.25)",
+        fc("K",f"=MIN({MAXS},MAX(0,H{r}-I{r}*0.25)+J{r}*0.25*(1-{LOSS}/100))",
            fmt="0.0", fg="818CF8")
         fc("L",f"=F{r}+I{r}-J{r}",            fmt="0.00",fg=NET,bold=True)
         fc("M",f"={RTC}",                      fmt="0.00",fg=WARN)

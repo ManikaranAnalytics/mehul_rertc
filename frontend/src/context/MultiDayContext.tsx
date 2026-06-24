@@ -8,7 +8,7 @@ import React, {
 } from 'react';
 import type { ScheduleResponse } from '../types';
 import { clampContractDate } from '../utils/constants';
-import { loadMultiDayState, loadMultiDayStateFromDb, saveMultiDayState } from '../utils/multiDayStorage';
+import { loadMultiDayState, loadMultiDayStateFromDb, saveMultiDayState, hasSavedMultiDayState, type PersistedMultiDayState } from '../utils/multiDayStorage';
 
 export interface DayResult {
   date: string;
@@ -22,6 +22,8 @@ interface MultiDayContextValue {
   setStartDate: React.Dispatch<React.SetStateAction<string>>;
   numDays: number;
   setNumDays: React.Dispatch<React.SetStateAction<number>>;
+  initialSocMwh: number;
+  setInitialSocMwh: React.Dispatch<React.SetStateAction<number>>;
   results: DayResult[];
   setResults: React.Dispatch<React.SetStateAction<DayResult[]>>;
   optimalRtcMw: number | null;
@@ -46,6 +48,7 @@ function readInitial() {
   return {
     startDate:          clampContractDate(saved?.startDate ?? '2026-06-01'),
     numDays:            saved?.numDays            ?? 7,
+    initialSocMwh:      saved?.initialSocMwh       ?? 0,
     results:            (saved?.results ?? []) as DayResult[],
     optimalRtcMw:       saved?.optimalRtcMw       ?? null,
     optimalSearchError: saved?.optimalSearchError ?? '',
@@ -57,46 +60,64 @@ export function MultiDayProvider({ children }: { children: React.ReactNode }) {
   const [initial] = useState(readInitial);
   const [startDate, setStartDate] = useState(initial.startDate);
   const [numDays, setNumDays] = useState(initial.numDays);
+  const [initialSocMwh, setInitialSocMwh] = useState(initial.initialSocMwh);
   const [results, setResults] = useState<DayResult[]>(initial.results);
   const [optimalRtcMw, setOptimalRtcMw] = useState<number | null>(initial.optimalRtcMw);
   const [optimalSearchError, setOptimalSearchError] = useState(initial.optimalSearchError);
   const [chartView, setChartView] = useState<MultiDayChartView>(initial.chartView);
 
   const skipPersistRef = useRef(true);
+  const configEditedRef = useRef(false);
+  const hadLocalStateRef = useRef(hasSavedMultiDayState());
 
-  // Sync multi-day state from PostgreSQL on startup
+  const applyConfigFromSaved = useCallback((saved: PersistedMultiDayState) => {
+    setStartDate(clampContractDate(saved.startDate));
+    setNumDays(saved.numDays);
+    setInitialSocMwh(saved.initialSocMwh);
+    setOptimalRtcMw(saved.optimalRtcMw);
+    setOptimalSearchError(saved.optimalSearchError);
+    if (VALID_CHART_VIEWS.has(saved.chartView)) {
+      setChartView(saved.chartView);
+    }
+  }, []);
+
+  // Hydrate from PostgreSQL on startup (localStorage used for fast first paint)
   useEffect(() => {
     let cancelled = false;
     loadMultiDayStateFromDb().then((saved) => {
       if (cancelled || !saved) return;
+
       skipPersistRef.current = true;
-      setStartDate(clampContractDate(saved.startDate));
-      setNumDays(saved.numDays);
-      setResults(saved.results as DayResult[]);
-      setOptimalRtcMw(saved.optimalRtcMw);
-      setOptimalSearchError(saved.optimalSearchError);
-      if (saved.chartView && VALID_CHART_VIEWS.has(saved.chartView as MultiDayChartView)) {
-        setChartView(saved.chartView as MultiDayChartView);
+      if (!hadLocalStateRef.current) {
+        applyConfigFromSaved(saved);
+        setResults(saved.results as DayResult[]);
+        return;
+      }
+
+      if (!configEditedRef.current) {
+        applyConfigFromSaved(saved);
       }
     });
     return () => { cancelled = true; };
-  }, []);
+  }, [applyConfigFromSaved]);
   const persist = useCallback(() => {
     saveMultiDayState({
       startDate,
       numDays,
+      initialSocMwh,
       chartView,
       results,
       optimalRtcMw,
       optimalSearchError,
     });
-  }, [startDate, numDays, chartView, results, optimalRtcMw, optimalSearchError]);
+  }, [startDate, numDays, initialSocMwh, chartView, results, optimalRtcMw, optimalSearchError]);
 
   useEffect(() => {
     if (skipPersistRef.current) {
       skipPersistRef.current = false;
       return;
     }
+    configEditedRef.current = true;
     persist();
   }, [persist]);
 
@@ -114,6 +135,8 @@ export function MultiDayProvider({ children }: { children: React.ReactNode }) {
     setStartDate,
     numDays,
     setNumDays,
+    initialSocMwh,
+    setInitialSocMwh,
     results,
     setResults,
     optimalRtcMw,

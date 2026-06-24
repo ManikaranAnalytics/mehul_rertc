@@ -1,7 +1,7 @@
 import React, { createContext, useContext, useState, useEffect, useCallback, useRef } from 'react';
 import type {
   ScheduleResponse, RTCRangeData, RawForecastRow, GenEdit, BlockData, SummaryData,
-  CurtailmentSegment, PspDischargeSegment,
+  CurtailmentSegment, PspDischargeSegment, DischargeTarget,
 } from '../types';
 import { BASE_URL, CONTRACT_DATES } from '../utils/constants';
 import {
@@ -12,6 +12,11 @@ import {
   loadOptimizerConfig,
   loadOptimizerConfigFromDb,
   saveOptimizerConfig,
+  inferOverrideFlags,
+  deriveAutoChargeMw,
+  deriveAutoDischargeMw,
+  deriveAutoMinDispatchMw,
+  hasSavedOptimizerConfig,
   type PersistedOptimizerConfig,
 } from '../utils/optimizerConfigStorage';
 import { lookupWindMW } from '../utils/powerCurve';
@@ -63,8 +68,14 @@ interface OptimizerContextValue {
   setPspDischargeSegments: React.Dispatch<React.SetStateAction<PspDischargeSegment[]>>;
 
   // PSP
+  transmissionLoss: number;
+  setTransmissionLoss: React.Dispatch<React.SetStateAction<number>>;
   roundtripLoss: number;
   setRoundtripLoss: React.Dispatch<React.SetStateAction<number>>;
+
+  /** PSP discharge target mode (Config tab toggle) */
+  dischargeTarget: DischargeTarget;
+  setDischargeTarget: React.Dispatch<React.SetStateAction<DischargeTarget>>;
 
   // Sidebar
   sideTab: 'config' | 'data';
@@ -129,6 +140,7 @@ export function useOptimizer(): OptimizerContextValue {
 
 export function OptimizerProvider({ children }: { children: React.ReactNode }) {
   const [savedConfig] = useState(loadOptimizerConfig);
+  const savedOverrides = inferOverrideFlags(savedConfig);
 
   // Config state (restored from localStorage on first load)
   const [selectedDate, setSelectedDate] = useState(savedConfig.selectedDate);
@@ -140,10 +152,10 @@ export function OptimizerProvider({ children }: { children: React.ReactNode }) {
   const [maxDischargeMw, setMaxDischargeMw] = useState(savedConfig.maxDischargeMw);
   const [minDispatchMw, setMinDispatchMw] = useState(savedConfig.minDispatchMw);
 
-  // Override flags: true = user has manually dragged and we should not auto-update
-  const [chargeOverridden, setChargeOverridden] = useState(false);
-  const [dischargeOverridden, setDischargeOverridden] = useState(false);
-  const [minDispatchOverridden, setMinDispatchOverridden] = useState(false);
+  // Override flags: restored from saved values so auto-derive does not reset manual PSP limits
+  const [chargeOverridden, setChargeOverridden] = useState(savedOverrides.chargeOverridden);
+  const [dischargeOverridden, setDischargeOverridden] = useState(savedOverrides.dischargeOverridden);
+  const [minDispatchOverridden, setMinDispatchOverridden] = useState(savedOverrides.minDispatchOverridden);
 
 
   // Curtailment config
@@ -158,6 +170,8 @@ export function OptimizerProvider({ children }: { children: React.ReactNode }) {
 
   // PSP loss %
   const [roundtripLoss, setRoundtripLoss] = useState(savedConfig.roundtripLoss);
+  const [transmissionLoss, setTransmissionLoss] = useState(savedConfig.transmissionLoss);
+  const [dischargeTarget, setDischargeTarget] = useState<DischargeTarget>(savedConfig.dischargeTarget);
 
   // Active sidebar tab
   const [sideTab, setSideTab] = useState<'config' | 'data'>('config');
@@ -183,38 +197,53 @@ export function OptimizerProvider({ children }: { children: React.ReactNode }) {
   const [carryFromDate, setCarryFromDate] = useState<string | null>(savedConfig.carryFromDate);
 
   const skipPersistRef = useRef(true);
+  const configEditedRef = useRef(false);
+  const hadLocalConfigRef = useRef(hasSavedOptimizerConfig());
 
-  // Sync config from PostgreSQL on startup (localStorage used as fast initial render)
-  useEffect(() => {
-    let cancelled = false;
-    loadOptimizerConfigFromDb().then((dbConfig) => {
-      if (cancelled) return;
-      skipPersistRef.current = true;
-      setSelectedDate(dbConfig.selectedDate);
-      setWtgCount(dbConfig.wtgCount);
-      setSolarAc(dbConfig.solarAc);
-      setRtcCommitment(dbConfig.rtcCommitment);
-      setMaxSocMwh(dbConfig.maxSocMwh);
-      setMaxChargeMw(dbConfig.maxChargeMw);
-      setMaxDischargeMw(dbConfig.maxDischargeMw);
-      setMinDispatchMw(dbConfig.minDispatchMw);
-      setCurtailmentEnabled(dbConfig.curtailmentEnabled);
-      setCurtailmentSegments(dbConfig.curtailmentSegments);
-      setPspDischargeSegments(dbConfig.pspDischargeSegments);
-      setRoundtripLoss(dbConfig.roundtripLoss);
-      setInitialSocMwh(dbConfig.initialSocMwh);
-      setPrevDayChargeSchedule(dbConfig.prevDayChargeSchedule);
-      setCarryFromDate(dbConfig.carryFromDate);
-      setBlockOverrides(dbConfig.blockOverrides);
-    });
-    return () => { cancelled = true; };
+  const applyPersistedConfig = useCallback((config: PersistedOptimizerConfig) => {
+    const flags = inferOverrideFlags(config);
+    setChargeOverridden(flags.chargeOverridden);
+    setDischargeOverridden(flags.dischargeOverridden);
+    setMinDispatchOverridden(flags.minDispatchOverridden);
+    setSelectedDate(config.selectedDate);
+    setWtgCount(config.wtgCount);
+    setSolarAc(config.solarAc);
+    setRtcCommitment(config.rtcCommitment);
+    setMaxSocMwh(config.maxSocMwh);
+    setMaxChargeMw(config.maxChargeMw);
+    setMaxDischargeMw(config.maxDischargeMw);
+    setMinDispatchMw(config.minDispatchMw);
+    setCurtailmentEnabled(config.curtailmentEnabled);
+    setCurtailmentSegments(config.curtailmentSegments);
+    setPspDischargeSegments(config.pspDischargeSegments);
+    setRoundtripLoss(config.roundtripLoss);
+    setTransmissionLoss(config.transmissionLoss);
+    setDischargeTarget(config.dischargeTarget);
+    setInitialSocMwh(config.initialSocMwh);
+    setPrevDayChargeSchedule(config.prevDayChargeSchedule);
+    setCarryFromDate(config.carryFromDate);
+    setBlockOverrides(config.blockOverrides);
   }, []);
 
+  // Hydrate from PostgreSQL only when localStorage is empty (new browser / cleared cache).
+  // Avoids async DB response overwriting in-session config changes.
+  useEffect(() => {
+    if (hadLocalConfigRef.current) return;
+
+    let cancelled = false;
+    loadOptimizerConfigFromDb().then((dbConfig) => {
+      if (cancelled || configEditedRef.current) return;
+      skipPersistRef.current = true;
+      applyPersistedConfig(dbConfig);
+    });
+    return () => { cancelled = true; };
+  }, [applyPersistedConfig]);
+
   // ── Auto-derive from maxSocMwh when not manually overridden ──
-  const derivedCharge     = Math.round((maxSocMwh / 6) * 2) / 2;   // nearest 0.5 MW
-  const derivedDischarge  = Math.round((maxSocMwh / 6) * 2) / 2;
+  const derivedCharge     = deriveAutoChargeMw(maxSocMwh);
+  const derivedDischarge  = deriveAutoDischargeMw(maxSocMwh);
   const effectiveMaxDrawal = dischargeOverridden ? maxDischargeMw : derivedDischarge;
-  const derivedMinDispatch = Math.round((effectiveMaxDrawal / 10) * 2) / 2;
+  const derivedMinDispatch = deriveAutoMinDispatchMw(effectiveMaxDrawal);
 
   useEffect(() => {
     if (!chargeOverridden) setMaxChargeMw(derivedCharge);
@@ -244,20 +273,22 @@ export function OptimizerProvider({ children }: { children: React.ReactNode }) {
       curtailmentStart,
       curtailmentEnd,
       roundtripLoss,
+      transmissionLoss,
       initialSocMwh,
       carryFromDate,
       prevDayChargeSchedule,
       blockOverrides,
       pspDischargeSegments,
+      dischargeTarget,
     };
     saveOptimizerConfig(config);
     return config;
   }, [
     selectedDate, wtgCount, solarAc, rtcCommitment,
     maxSocMwh, maxChargeMw, maxDischargeMw, minDispatchMw,
-    curtailmentEnabled, curtailmentSegments, roundtripLoss,
+    curtailmentEnabled, curtailmentSegments, roundtripLoss, transmissionLoss,
     initialSocMwh, carryFromDate, prevDayChargeSchedule, blockOverrides,
-    pspDischargeSegments,
+    pspDischargeSegments, dischargeTarget,
   ]);
 
   useEffect(() => {
@@ -265,6 +296,7 @@ export function OptimizerProvider({ children }: { children: React.ReactNode }) {
       skipPersistRef.current = false;
       return;
     }
+    configEditedRef.current = true;
     persistConfig();
   }, [persistConfig]);
 
@@ -352,6 +384,7 @@ export function OptimizerProvider({ children }: { children: React.ReactNode }) {
             rtc_commitment_mw: rtcCommitment,
             curtailment_enabled: curtailmentEnabled,
             curtailment_segments: curtailmentSegments,
+            transmission_loss_pct: transmissionLoss,
             roundtrip_loss_pct: roundtripLoss,
             min_compliance_ratio: 0.50,
             max_soc_mwh: maxSocMwh,
@@ -362,6 +395,7 @@ export function OptimizerProvider({ children }: { children: React.ReactNode }) {
             initial_soc_mwh: initialSocMwh,
             prev_day_charge_schedule: prevDayChargeSchedule,
             psp_discharge_segments: pspDischargeSegments.length > 0 ? pspDischargeSegments : null,
+            discharge_target: dischargeTarget,
           })
         });
         if (!response.ok) {
@@ -399,7 +433,7 @@ export function OptimizerProvider({ children }: { children: React.ReactNode }) {
 
     const handler = setTimeout(() => { fetchSchedule(); }, 150);
     return () => clearTimeout(handler);
-  }, [selectedDate, wtgCount, solarAc, rtcCommitment, curtailmentEnabled, curtailmentSegments, roundtripLoss, maxSocMwh, maxChargeMw, maxDischargeMw, minDispatchMw, initialSocMwh, prevDayChargeSchedule, pspDischargeSegments, buildOverridesList]);
+  }, [selectedDate, wtgCount, solarAc, rtcCommitment, curtailmentEnabled, curtailmentSegments, transmissionLoss, roundtripLoss, maxSocMwh, maxChargeMw, maxDischargeMw, minDispatchMw, initialSocMwh, prevDayChargeSchedule, pspDischargeSegments, dischargeTarget, buildOverridesList]);
 
   // ── Roll to next day ──
   const handleRollToNextDay = useCallback(() => {
@@ -435,6 +469,7 @@ export function OptimizerProvider({ children }: { children: React.ReactNode }) {
             solar_ac_mw: solarAc,
             curtailment_enabled: curtailmentEnabled,
             curtailment_segments: curtailmentSegments,
+            transmission_loss_pct: transmissionLoss,
             roundtrip_loss_pct: roundtripLoss,
             min_compliance_ratio: 0.50,
             max_soc_mwh: maxSocMwh,
@@ -444,6 +479,7 @@ export function OptimizerProvider({ children }: { children: React.ReactNode }) {
             initial_soc_mwh: initialSocMwh,
             block_overrides: buildOverridesList(),
             psp_discharge_segments: pspDischargeSegments.length > 0 ? pspDischargeSegments : null,
+            discharge_target: dischargeTarget,
           })
         });
         if (response.ok) {
@@ -458,7 +494,7 @@ export function OptimizerProvider({ children }: { children: React.ReactNode }) {
     };
     const handler = setTimeout(fetchRange, 300);
     return () => clearTimeout(handler);
-  }, [selectedDate, wtgCount, solarAc, curtailmentEnabled, curtailmentSegments, roundtripLoss, maxSocMwh, maxChargeMw, maxDischargeMw, minDispatchMw, initialSocMwh, pspDischargeSegments, buildOverridesList]);
+  }, [selectedDate, wtgCount, solarAc, curtailmentEnabled, curtailmentSegments, transmissionLoss, roundtripLoss, maxSocMwh, maxChargeMw, maxDischargeMw, minDispatchMw, initialSocMwh, pspDischargeSegments, dischargeTarget, buildOverridesList]);
 
   // ── Fetch raw forecast ──
   useEffect(() => {
@@ -516,7 +552,9 @@ export function OptimizerProvider({ children }: { children: React.ReactNode }) {
     curtailmentStart,
     curtailmentEnd,
     pspDischargeSegments, setPspDischargeSegments,
+    transmissionLoss, setTransmissionLoss,
     roundtripLoss, setRoundtripLoss,
+    dischargeTarget, setDischargeTarget,
     sideTab, setSideTab,
     blockOverrides, setBlockOverrides,
     scheduleData, loading, error,

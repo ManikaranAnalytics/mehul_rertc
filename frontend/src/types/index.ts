@@ -10,6 +10,9 @@ export interface PspDischargeSegment {
   maxDischargeMw: number; // 0 = no discharge allowed; >0 = discharge cap
 }
 
+/** PSP discharge goal: full RTC commitment or 50% regulatory floor only */
+export type DischargeTarget = 'rtc_commitment' | 'compliance_floor';
+
 export interface BlockData {
   block: number;
   time: string;
@@ -54,8 +57,12 @@ export interface SummaryData {
   max_soc_mwh: number;
   end_soc_mwh: number;
   compliant_blocks: number;
+  rtc_met_blocks?: number;
   total_blocks: number;
   fully_compliant: boolean;
+  fully_rtc_met?: boolean;
+  rtc_shortfall_energy_mwh?: number;
+  discharge_target?: DischargeTarget;
   total_rtm_surplus_mwh: number;
   total_net_delivered_mwh?: number;
   psp_usable_charged_mwh?: number;

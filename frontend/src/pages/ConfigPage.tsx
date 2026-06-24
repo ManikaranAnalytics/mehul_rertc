@@ -3,6 +3,7 @@ import { Line } from 'react-chartjs-2';
 import '../utils/chartSetup';
 import { Settings2, Plus, Trash2 } from 'lucide-react';
 import { useOptimizer } from '../context/OptimizerContext';
+import DischargeTargetToggle from '../components/config/DischargeTargetToggle';
 import type { CurtailmentSegment, PspDischargeSegment } from '../types';
 import {
   PSP_MAX_CAPACITY_MWH,
@@ -578,9 +579,11 @@ export default function ConfigPage() {
     curtailmentEnabled, setCurtailmentEnabled,
     curtailmentSegments, setCurtailmentSegments,
     roundtripLoss, setRoundtripLoss,
+    transmissionLoss, setTransmissionLoss,
     carryFromDate, initialSocMwh,
     handleClearCarry,
     pspDischargeSegments, setPspDischargeSegments,
+    dischargeTarget, setDischargeTarget,
   } = useOptimizer();
 
   const errors = useMemo(() => validateSegments(curtailmentSegments), [curtailmentSegments]);
@@ -604,10 +607,16 @@ export default function ConfigPage() {
   return (
     <div className="config-page">
       <div className="page-header-bar">
-        <h2 className="page-heading">Advanced Configuration</h2>
-        <p style={{ fontSize: '13px', color: '#64748b', margin: 0 }}>
-          Curtailment windows, PSP parameters, and carry-forward settings.
-        </p>
+        <div>
+          <h2 className="page-heading">Advanced Configuration</h2>
+          <p style={{ fontSize: '13px', color: '#64748b', margin: '4px 0 0' }}>
+            Curtailment windows, PSP parameters, and carry-forward settings.
+          </p>
+        </div>
+        <div className="config-discharge-target-control">
+          <span className="config-discharge-target-label">PSP target</span>
+          <DischargeTargetToggle value={dischargeTarget} onChange={setDischargeTarget} compact />
+        </div>
       </div>
 
       {/* Single-column layout */}
@@ -707,7 +716,32 @@ export default function ConfigPage() {
             <input type="range" min="10" max="30" step="1" className="range-slider" value={roundtripLoss} onChange={e => setRoundtripLoss(parseFloat(e.target.value))} style={{ '--color-wind': '#f87171' } as React.CSSProperties} />
             <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '11px', color: 'var(--text-muted)', marginTop: '4px' }}>
               <span>10% (optimistic)</span>
-              <span>Usable per MWh stored: {(100 - roundtripLoss).toFixed(0)}%</span>
+              <span>Applied after transmission on charge</span>
+            </div>
+          </div>
+
+          {/* Transmission Loss */}
+          <div className="config-group">
+            <div className="config-label-area">
+              <span className="config-label">Transmission Loss</span>
+              <span className="config-value" style={{ color: '#fb923c' }}>{transmissionLoss.toFixed(1)}%</span>
+            </div>
+            <input
+              type="range"
+              min="0"
+              max="15"
+              step="0.5"
+              className="range-slider"
+              value={transmissionLoss}
+              onChange={e => setTransmissionLoss(parseFloat(e.target.value))}
+              style={{ '--color-wind': '#fb923c' } as React.CSSProperties}
+            />
+            <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '11px', color: 'var(--text-muted)', marginTop: '4px' }}>
+              <span>0% (none)</span>
+              <span>
+                Net stored per 12.5 MWh routed:{' '}
+                {(12.5 * (1 - transmissionLoss / 100) * (1 - roundtripLoss / 100)).toFixed(2)} MWh
+              </span>
             </div>
           </div>
 
@@ -850,7 +884,13 @@ export default function ConfigPage() {
               </li>
               <li style={{ marginBottom: '6px' }}>Orvakallu PSP storage capacity configurable up to {PSP_MAX_CAPACITY_MWH} MWh.</li>
               <li style={{ marginBottom: '6px' }}>PSP rates: charge ≤ {maxChargeMw} MW, discharge ≤ {maxDischargeMw} MW, min dispatch {minDispatchMw} MW.</li>
-              <li>Min delivery floor: 50% of RTC commitment.</li>
+              <li style={{ marginBottom: '6px' }}>
+                PSP discharge target:{' '}
+                <strong style={{ color: dischargeTarget === 'rtc_commitment' ? '#34d399' : '#94a3b8' }}>
+                  {dischargeTarget === 'rtc_commitment' ? 'Full RTC commitment' : '50% compliance floor'}
+                </strong>.
+              </li>
+              <li>Min delivery floor: 50% of RTC commitment (regulatory pass/fail).</li>
             </ul>
           </div>
         </div>

@@ -123,6 +123,62 @@ body {
 }
 
 /* KPI Dashboard Cards */
+.energy-accounting-row {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 0;
+  padding: 0;
+  margin-bottom: 20px;
+  overflow: hidden;
+}
+
+.energy-accounting-cell {
+  padding: 18px 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+}
+
+.energy-accounting-label {
+  font-size: 11px;
+  font-weight: 600;
+  color: #64748b;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  line-height: 1.35;
+}
+
+.energy-accounting-value {
+  font-size: 28px;
+  font-weight: 800;
+  font-family: 'JetBrains Mono', monospace;
+  line-height: 1.1;
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+}
+
+.energy-accounting-unit {
+  font-size: 14px;
+  font-weight: 500;
+  color: #64748b;
+}
+
+.energy-accounting-hint {
+  font-size: 10px;
+  color: #475569;
+  line-height: 1.4;
+}
+
+.energy-accounting-subtitle {
+  grid-column: 1 / -1;
+  padding: 10px 20px 14px;
+  border-top: 1px solid rgba(255,255,255,0.07);
+  font-size: 12px;
+  color: #64748b;
+}
+
 .kpi-grid {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
@@ -950,6 +1006,67 @@ table.schedule-table {
 }
 
 /* ═══════════════════════════════════════════════════════════════
+   MINI SEGMENT TOGGLE (theme-style)
+   ═══════════════════════════════════════════════════════════════ */
+
+.mini-segment-toggle {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  gap: 0;
+}
+
+.mini-segment-toggle button {
+  border: none;
+  background: transparent;
+  color: #64748b;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.2px;
+  padding: 5px 11px;
+  border-radius: 999px;
+  cursor: pointer;
+  transition: background 0.15s ease, color 0.15s ease, box-shadow 0.15s ease;
+  font-family: var(--font-sans);
+  line-height: 1;
+}
+
+.mini-segment-toggle button:hover:not(.active) {
+  color: #94a3b8;
+  background: rgba(255, 255, 255, 0.04);
+}
+
+.mini-segment-toggle button.active {
+  background: rgba(99, 102, 241, 0.22);
+  color: #c7d2fe;
+  box-shadow: 0 1px 4px rgba(99, 102, 241, 0.15);
+}
+
+.mini-segment-toggle--compact button {
+  padding: 4px 9px;
+  font-size: 10px;
+}
+
+.config-discharge-target-control {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+}
+
+.config-discharge-target-label {
+  font-size: 11px;
+  font-weight: 600;
+  color: #64748b;
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+  white-space: nowrap;
+}
+
+/* ═══════════════════════════════════════════════════════════════
    PAGE HEADERS
    ═══════════════════════════════════════════════════════════════ */
 
@@ -1595,6 +1712,18 @@ table.schedule-table {
   .glass-panel {
     padding: 16px;
     border-radius: 12px;
+  }
+
+  .energy-accounting-row {
+    grid-template-columns: 1fr 1fr;
+  }
+
+  .energy-accounting-cell:nth-child(2) {
+    border-right: none !important;
+  }
+
+  .energy-accounting-value {
+    font-size: 22px;
   }
 
   .kpi-grid {

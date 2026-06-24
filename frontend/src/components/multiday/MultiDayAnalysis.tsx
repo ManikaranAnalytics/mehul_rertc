@@ -9,7 +9,9 @@ import { BASE_URL, CONTRACT_DATES, CONTRACT_END_DATE, CONTRACT_START_DATE, clamp
 import { fetchAllGenerationEdits, genEditsToBlockOverrides } from '../../utils/generationDbApi';
 import { ppaNetScheduleMw } from '../../utils/netSchedule';
 import { finalizeChargeWindowLots, sumChargeWindowMetric } from '../../utils/chargeWindow';
+import { computeEnergyAccounting, sumEnergyAccounting } from '../../utils/energyAccounting';
 import type { ScheduleResponse, BlockData, ChargeLot } from '../../types';
+import EnergyAccountingRow from '../dashboard/EnergyAccountingRow';
 
 /* ───────── PSP Local-Maxima Helper ───────── */
 
@@ -37,15 +39,17 @@ export default function MultiDayAnalysis() {
     rtcCommitment, setRtcCommitment,
     maxSocMwh,
     maxChargeMw, maxDischargeMw, minDispatchMw,
-    curtailmentEnabled, curtailmentStart, curtailmentEnd,
-    curtailmentSegments,
+    curtailmentEnabled, curtailmentSegments,
     roundtripLoss,
+    transmissionLoss,
     pspDischargeSegments,
+    dischargeTarget,
   } = useOptimizer();
 
   const {
     startDate, setStartDate,
     numDays, setNumDays,
+    initialSocMwh, setInitialSocMwh,
     results, setResults,
     optimalRtcMw, setOptimalRtcMw,
     optimalSearchError, setOptimalSearchError,
@@ -65,9 +69,20 @@ export default function MultiDayAnalysis() {
     }
     if (results.length > 0) setIsStale(true);
   }, [
-    maxSocMwh, maxChargeMw, maxDischargeMw, minDispatchMw, roundtripLoss,
-    curtailmentEnabled, curtailmentStart, curtailmentEnd, results.length,
+    wtgCount, solarAc, rtcCommitment,
+    maxSocMwh, maxChargeMw, maxDischargeMw, minDispatchMw, roundtripLoss, transmissionLoss,
+    curtailmentEnabled, curtailmentSegments, pspDischargeSegments,
+    dischargeTarget,
+    initialSocMwh,
+    results.length,
   ]);
+
+  // Keep start SoC within configured PSP capacity
+  useEffect(() => {
+    if (initialSocMwh > maxSocMwh) {
+      setInitialSocMwh(maxSocMwh);
+    }
+  }, [initialSocMwh, maxSocMwh, setInitialSocMwh]);
 
 
 
@@ -91,7 +106,7 @@ export default function MultiDayAnalysis() {
     setOptimalSearchError('');
 
     const dayResults: DayResult[] = [];
-    let currentSocMwh = 0;
+    let currentSocMwh = initialSocMwh;
     let prevChargeSchedule: number[] | null = null;
     let prevChargeLots: ChargeLot[] | null = null;
     const datesRun: string[] = [];
@@ -116,6 +131,7 @@ export default function MultiDayAnalysis() {
             rtc_commitment_mw: rtcCommitment,
             curtailment_enabled: curtailmentEnabled,
             curtailment_segments: curtailmentSegments,
+            transmission_loss_pct: transmissionLoss,
             roundtrip_loss_pct: roundtripLoss,
             min_compliance_ratio: 0.50,
             max_soc_mwh: maxSocMwh,
@@ -128,6 +144,7 @@ export default function MultiDayAnalysis() {
             prev_charge_lots: prevChargeLots,
             global_block_offset: i * 96,
             psp_discharge_segments: pspDischargeSegments.length > 0 ? pspDischargeSegments : null,
+            discharge_target: dischargeTarget,
           })
         });
 
@@ -157,14 +174,16 @@ export default function MultiDayAnalysis() {
               solar_ac_mw: solarAc,
               curtailment_enabled: curtailmentEnabled,
               curtailment_segments: curtailmentSegments,
-              roundtrip_loss_pct: roundtripLoss,
+              transmission_loss_pct: transmissionLoss,
+            roundtrip_loss_pct: roundtripLoss,
               min_compliance_ratio: 0.50,
               max_soc_mwh: maxSocMwh,
               max_charge_mw: maxChargeMw,
               max_discharge_mw: maxDischargeMw,
               min_dispatch_mw: minDispatchMw,
-              initial_soc_mwh: 0,
+              initial_soc_mwh: initialSocMwh,
               psp_discharge_segments: pspDischargeSegments.length > 0 ? pspDischargeSegments : null,
+              discharge_target: dischargeTarget,
             })
           });
           if (optRes.ok) {
@@ -188,7 +207,7 @@ export default function MultiDayAnalysis() {
       setIsRunning(false);
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [startDate, numDays, wtgCount, solarAc, rtcCommitment, curtailmentEnabled, curtailmentSegments, roundtripLoss, maxSocMwh, maxChargeMw, maxDischargeMw, minDispatchMw]);
+  }, [startDate, numDays, initialSocMwh, wtgCount, solarAc, rtcCommitment, curtailmentEnabled, curtailmentSegments, transmissionLoss, roundtripLoss, maxSocMwh, maxChargeMw, maxDischargeMw, minDispatchMw, pspDischargeSegments, dischargeTarget]);
 
   // ── Aggregated Metrics ──
   const n = results.length || 1;
@@ -244,6 +263,10 @@ export default function MultiDayAnalysis() {
   const avgDailyDischarge = totalDischargedMwh / n;
   const avgDailyCycles = totalCycles / n;
   const avgDailyRtm = totalRtmSurplus / n;
+
+  const periodEnergyAccounting = sumEnergyAccounting(
+    results.map(r => computeEnergyAccounting(r.schedule.blocks, rtcCommitment)),
+  );
 
   // ── Generation stats across all blocks ──
   const allNetSchedules = results.flatMap(r => r.schedule.blocks.map(b => b.net_schedule));
@@ -615,6 +638,28 @@ export default function MultiDayAnalysis() {
               style={{ '--color-wind': '#818cf8', width: '100%' } as React.CSSProperties} />
           </div>
 
+          {/* ── Starting SoC ── */}
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '5px', paddingLeft: '16px', paddingRight: '16px', borderRight: '1px solid rgba(255,255,255,0.07)', flex: '1', minWidth: '130px' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+              <span style={{ fontSize: '11px', color: '#64748b', textTransform: 'uppercase', letterSpacing: '0.5px', whiteSpace: 'nowrap' }}>Start SoC</span>
+              <span style={{ color: '#a78bfa', fontWeight: '700', fontSize: '13px', fontFamily: 'monospace', marginLeft: '8px' }}>{initialSocMwh.toFixed(0)} MWh</span>
+            </div>
+            <input
+              type="range"
+              min="0"
+              max={maxSocMwh}
+              step="5"
+              className="range-slider"
+              value={initialSocMwh}
+              onChange={e => {
+                setInitialSocMwh(parseFloat(e.target.value));
+                markStale();
+              }}
+              style={{ '--color-wind': '#a78bfa', width: '100%' } as React.CSSProperties}
+            />
+            <span style={{ fontSize: '10px', color: '#475569' }}>Tank at start of day 1</span>
+          </div>
+
           {/* ── Wind Turbines ── */}
           <div style={{ display: 'flex', flexDirection: 'column', gap: '5px', paddingLeft: '16px', paddingRight: '16px', borderRight: '1px solid rgba(255,255,255,0.07)', flex: '1', minWidth: '140px' }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
@@ -694,7 +739,7 @@ export default function MultiDayAnalysis() {
             display: 'flex', alignItems: 'center', gap: '10px',
           }}>
             <div style={{ width: '8px', height: '8px', borderRadius: '50%', background: '#f59e0b', flexShrink: 0, animation: 'pulse 1.5s ease-in-out infinite' }} />
-            <span>Config changed — results &amp; optimal commitment are outdated. Click <strong>Run Analysis</strong> to update.</span>
+            <span>Config changed — results &amp; optimal commitment are outdated. Click <strong>Run {numDays}-Day Analysis</strong> to update with your current Advanced Config (PSP, curtailment, loss %).</span>
           </div>
         )}
       </div>
@@ -702,50 +747,11 @@ export default function MultiDayAnalysis() {
       {/* ─── Results ─── */}
       {results.length > 0 && (
         <>
-          {/* ── Total Delivered to Consumer — Hero Card ── */}
-          <div className="glass-panel" style={{
-            background: 'linear-gradient(135deg, rgba(16,185,129,0.10) 0%, rgba(52,211,153,0.06) 100%)',
-            border: '1px solid rgba(16,185,129,0.30)',
-            padding: '20px 24px',
-            marginBottom: '20px',
-            display: 'flex',
-            alignItems: 'center',
-            gap: '24px',
-            flexWrap: 'wrap',
-          }}>
-            <div style={{ flex: '0 0 auto' }}>
-              <div style={{ fontSize: '11px', color: '#6ee7b7', textTransform: 'uppercase', letterSpacing: '0.6px', marginBottom: '4px', fontWeight: '600' }}>
-                ⚡ Total Power Delivered to Consumer
-              </div>
-              <div style={{ display: 'flex', alignItems: 'baseline', gap: '8px' }}>
-                <span style={{ fontSize: '42px', fontWeight: '800', color: '#34d399', fontFamily: 'JetBrains Mono, monospace', lineHeight: 1 }}>
-                  {totalNetDeliveredMwh.toFixed(1)}
-                </span>
-                <span style={{ fontSize: '18px', color: '#6ee7b7', fontWeight: '500' }}>MWh</span>
-              </div>
-              <div style={{ fontSize: '12px', color: '#4ade80', marginTop: '4px' }}>
-                {(totalNetDeliveredMwh / Math.max(results.length, 1)).toFixed(1)} MWh/day average · {results.length}-day period
-              </div>
-            </div>
-            <div style={{ flex: '1', minWidth: '200px', borderLeft: '1px solid rgba(16,185,129,0.2)', paddingLeft: '24px' }}>
-              <div style={{ fontSize: '11px', color: '#64748b', marginBottom: '8px' }}>Delivery vs RTC target</div>
-              {(() => {
-                const target = rtcCommitment * 96 * 0.25 * results.length;
-                const pct = target > 0 ? Math.min(100, (totalNetDeliveredMwh / target) * 100) : 0;
-                return (
-                  <>
-                    <div style={{ height: '10px', borderRadius: '5px', background: 'rgba(255,255,255,0.05)', overflow: 'hidden', marginBottom: '6px' }}>
-                      <div style={{ height: '100%', width: `${pct}%`, background: 'linear-gradient(90deg, #10b981, #34d399)', borderRadius: '5px', transition: 'width 0.8s ease' }} />
-                    </div>
-                    <div style={{ fontSize: '12px', color: '#94a3b8' }}>
-                      <span style={{ color: pct >= 100 ? '#34d399' : pct >= 80 ? '#fbbf24' : '#f87171', fontWeight: '700' }}>{pct.toFixed(1)}%</span>
-                      {' '}of {target.toFixed(0)} MWh target ({rtcCommitment} MW × {results.length} days)
-                    </div>
-                  </>
-                );
-              })()}
-            </div>
-          </div>
+          <EnergyAccountingRow
+            metrics={periodEnergyAccounting}
+            subtitle={`Period total · ${results.length} days · RTC commitment ${rtcCommitment.toFixed(1)} MW`}
+          />
+
           {/* Aggregated KPIs — Totals Row */}
           <div className="multiday-kpi-grid">
             {[

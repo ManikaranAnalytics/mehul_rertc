@@ -3,6 +3,15 @@ import numpy as np
 
 from services.charge_window import process_charge_window_block, seed_lots_from_initial_soc
 
+DISCHARGE_TARGET_RTC = "rtc_commitment"
+DISCHARGE_TARGET_FLOOR = "compliance_floor"
+VALID_DISCHARGE_TARGETS = frozenset({DISCHARGE_TARGET_RTC, DISCHARGE_TARGET_FLOOR})
+
+
+def net_charge_efficiency(transmission_loss_pct: float, roundtrip_loss_pct: float) -> float:
+    """Combined fraction of routed charge energy that is stored in SoC."""
+    return (1.0 - transmission_loss_pct / 100.0) * (1.0 - roundtrip_loss_pct / 100.0)
+
 
 def optimize_psp_dispatch(
     forecast_df: pd.DataFrame,
@@ -11,6 +20,7 @@ def optimize_psp_dispatch(
     max_soc: float = 360.0,
     max_charge: float = 60.0,
     max_discharge: float = 50.0,
+    transmission_loss_pct: float = 3.0,
     roundtrip_loss_pct: float = 20.0,   # % loss on round-trip (e.g. 20 means 20% loss)
     max_cycles: float = 2.0,
     min_compliance_ratio: float = 0.50,  # 50% of RTC is the regulatory floor
@@ -19,23 +29,27 @@ def optimize_psp_dispatch(
     prev_charge_lots: list | None = None,   # FIFO charge lots carried from previous day(s)
     global_block_offset: int = 0,         # day_index * 96 for multi-day timelines
     psp_discharge_segments: list = None,    # [{startBlock, endBlock, maxDischargeMw}, ...]
+    discharge_target: str = DISCHARGE_TARGET_RTC,
 ) -> dict:
     """
     Simulates PSP charging/discharging sequentially over 96 blocks.
 
     Priority order:
-      1. First, always try to meet the RTC commitment on the grid.
-         - If generation >= RTC: deliver exactly RTC to grid, route surplus to PSP (charge).
-         - If generation < RTC but >= min_floor: deliver generation as-is (no PSP discharge needed).
-         - If generation < min_floor: discharge PSP to top up delivery to min_floor.
-      2. PSP is also charged during the night surplus blocks (blocks 1–36 and 65–96)
-         when generation exceeds RTC, to prepare a buffer for the next day.
+      1. Discharge PSP when generation is below the configured target:
+         - discharge_target="rtc_commitment": top up toward full RTC (default).
+         - discharge_target="compliance_floor": top up only to min_schedule (50% floor).
+         - If generation >= RTC: route surplus to PSP (charge).
+      2. Charge PSP with any generation surplus above RTC.
+
+    Regulatory compliance (50% floor) is always evaluated after dispatch.
 
     Loss model:
-      - roundtrip_loss_pct = total round-trip % loss (default 20%)
-      - discharge_loss_factor = 1 / (1 - roundtrip_loss_pct/100)
-        e.g. 20% loss → factor = 1.25  (need 1.25 MWh in to deliver 1 MWh out)
-      - SoC deduction per block: psp_discharge * 0.25 * discharge_loss_factor
+      - transmission_loss_pct = grid-to-PSP loss on charge (applied first)
+      - roundtrip_loss_pct = PSP storage loss on charge (applied to energy after transmission)
+      - Charge: gross MWh = psp_charge × 0.25; then × (1 - tx%) × (1 - rt%) stored in SoC
+        e.g. 50 MW × 0.25 h = 12.5 MWh → −3% tx → −20% rt → 9.66 MWh stored
+      - Discharge: SoC drops 1:1 with energy delivered (psp_discharge × 0.25 MWh)
+      - total_charged_mwh = gross energy routed to PSP; psp_usable_charged_mwh = net stored
 
     Carry-forward rule:
       - The carry budget at the start of the day = initial_soc (the physical EOD SoC
@@ -49,16 +63,25 @@ def optimize_psp_dispatch(
       - max_soc           : PSP storage ceiling in MWh
       - max_charge        : Max charging rate in MW
       - max_discharge     : Max discharge rate in MW
-      - roundtrip_loss_pct: Total round-trip loss percentage (10–20 typical)
+      - roundtrip_loss_pct: PSP round-trip loss on charge (after transmission)
+      - transmission_loss_pct: Grid-to-PSP transmission loss on charge
       - max_cycles        : Max allowable charge cycles per day
       - min_compliance_ratio: Fraction of RTC that is the delivery floor (0.50 = 50%)
 
     Returns:
       dict with 'blocks' (list of per-block dicts), 'summary' (daily KPIs), and 'carry_forward' info
     """
+    if discharge_target not in VALID_DISCHARGE_TARGETS:
+        discharge_target = DISCHARGE_TARGET_RTC
+
     # Derived constants
-    discharge_loss_factor = 1.0 / (1.0 - roundtrip_loss_pct / 100.0)
     min_schedule = min_compliance_ratio * rtc_commitment
+    discharge_threshold_mw = (
+        rtc_commitment if discharge_target == DISCHARGE_TARGET_RTC else min_schedule
+    )
+    charge_net_efficiency = net_charge_efficiency(transmission_loss_pct, roundtrip_loss_pct)
+    transmission_efficiency = 1.0 - transmission_loss_pct / 100.0
+    roundtrip_efficiency = 1.0 - roundtrip_loss_pct / 100.0
 
     # ── CARRY-FORWARD BUDGET ───────────────────────────────────────────────────
     # Carry budget = what was physically in the tank at end of previous day.
@@ -105,7 +128,6 @@ def optimize_psp_dispatch(
         curtail_flag = bool(row.get('curtail_flag', False))
 
         # generation_mw now reflects combined MW cap from curtailment segment (not hard zero)
-        # PSP discharge gap = max(0, min_schedule - generation_mw)
         generation_mw = wind_mw + solar_mw
 
         # Effective per-block discharge cap (from segment config or global max)
@@ -120,16 +142,15 @@ def optimize_psp_dispatch(
         # Starts at initial_soc and depletes as carry-forward discharges are made.
         carry_budget_now = round(carry_remaining, 4)
 
-        # ── PRIORITY 1: MEET RTC COMMITMENT ──────────────────────────────────
-        # If generation is below the compliance floor → discharge PSP to reach floor
-        if generation_mw < min_schedule:
-            shortfall = min_schedule - generation_mw
+        # ── PRIORITY 1: DISCHARGE TOWARD TARGET ──────────────────────────────
+        if generation_mw < discharge_threshold_mw:
+            shortfall = discharge_threshold_mw - generation_mw
 
             # Track the potential (unconstrained) discharge opportunity
             potential_discharge_mwh += shortfall * 0.25
 
-            # Available discharge power limited by remaining SoC
-            available_discharge_mw = soc / (0.25 * discharge_loss_factor) if discharge_loss_factor > 0 else 0.0
+            # Available discharge power limited by remaining SoC (1 MWh SoC → 4 MW for 15 min)
+            available_discharge_mw = soc / 0.25
 
             # What we would dispatch ignoring CERC 6MW rule
             unconstrained_dispatch = min(shortfall, effective_max_discharge, available_discharge_mw)
@@ -151,23 +172,24 @@ def optimize_psp_dispatch(
                     psp_discharge = bumped
 
             if psp_discharge > 0:
-                soc_deduction = psp_discharge * 0.25 * discharge_loss_factor
+                soc_deduction = psp_discharge * 0.25
                 soc = max(0.0, soc - soc_deduction)
                 total_discharged_mwh += psp_discharge * 0.25
 
                 # Attribute discharge to carry-forward first, then same-day
-                carry_discharge_this_block = min(psp_discharge, carry_remaining / (0.25 * discharge_loss_factor))
-                carry_energy_used = carry_discharge_this_block * 0.25 * discharge_loss_factor
+                carry_discharge_this_block = min(psp_discharge, carry_remaining / 0.25)
+                carry_energy_used = carry_discharge_this_block * 0.25
                 carry_remaining = max(0.0, carry_remaining - carry_energy_used)
                 total_carry_discharged_mwh += carry_discharge_this_block * 0.25
 
         # ── PRIORITY 2: CHARGE PSP WITH SURPLUS ──────────────────────────────
         if generation_mw > rtc_commitment:
             surplus = generation_mw - rtc_commitment
-            space_in_tank_mw = (max_soc - soc) / 0.25
+            # Gross MW limit from remaining tank space (stored MWh / efficiency)
+            space_in_tank_mw = (max_soc - soc) / (0.25 * charge_net_efficiency) if charge_net_efficiency > 0 else 0.0
             cycles_used = total_charged_mwh / max_soc if max_soc > 0 else 0.0
             remaining_cycle_capacity_mwh = max(0.0, max_cycles - cycles_used) * max_soc
-            cycle_charge_limit_mw = remaining_cycle_capacity_mwh / 0.25
+            cycle_charge_limit_mw = remaining_cycle_capacity_mwh / (0.25 * charge_net_efficiency) if charge_net_efficiency > 0 else 0.0
 
             psp_charge = min(surplus, max_charge, space_in_tank_mw, cycle_charge_limit_mw)
 
@@ -176,9 +198,11 @@ def optimize_psp_dispatch(
                 psp_charge = 0.0
 
             if psp_charge > 0:
-                soc_addition = psp_charge * 0.25
+                gross_charge_mwh = psp_charge * 0.25
+                after_transmission_mwh = gross_charge_mwh * transmission_efficiency
+                soc_addition = after_transmission_mwh * roundtrip_efficiency
                 soc = min(max_soc, soc + soc_addition)
-                total_charged_mwh += soc_addition
+                total_charged_mwh += gross_charge_mwh
 
         today_charge_schedule.append(round(psp_charge, 4))
 
@@ -188,6 +212,7 @@ def optimize_psp_dispatch(
             global_block,
             psp_charge,
             psp_discharge,
+            charge_efficiency=charge_net_efficiency,
         )
         total_window_charged_mwh += window_metrics["charge_window_charged_mwh"]
         total_window_discharged_mwh += window_metrics["charge_window_discharged_mwh"]
@@ -224,8 +249,16 @@ def optimize_psp_dispatch(
 
     # ── DAILY SUMMARY ─────────────────────────────────────────────────────────
     compliant_blocks_count = sum(1 for b in block_results if b['compliant'])
+    rtc_met_blocks_count = sum(
+        1 for b in block_results if b['net_schedule'] >= rtc_commitment - 1e-4
+    )
     total_rtm_surplus_mwh = sum(b['rtm_surplus'] * 0.25 for b in block_results)
     total_net_delivered_mwh = sum(b['net_schedule'] * 0.25 for b in block_results)
+    rtc_shortfall_energy_mwh = sum(
+        max(0.0, rtc_commitment - b['net_schedule']) * 0.25
+        for b in block_results
+        if b['net_schedule'] < rtc_commitment - 1e-9
+    )
     # Energy deficit for non-compliant blocks: sum of (floor - net_schedule) * 0.25h
     # Use the raw gap directly (not gated on compliant flag, which has a 1e-4 tolerance)
     shortfall_energy_mwh = sum(
@@ -233,12 +266,14 @@ def optimize_psp_dispatch(
         for b in block_results
         if b['net_schedule'] < b['min_schedule'] - 1e-9
     )
-    psp_usable_charged_mwh = round(total_charged_mwh * (1.0 - roundtrip_loss_pct / 100.0), 2)
+    psp_usable_charged_mwh = round(total_charged_mwh * charge_net_efficiency, 2)
 
     summary = {
         "rtc_commitment_mw":            rtc_commitment,
         "min_schedule_mw":              min_schedule,
         "min_compliance_ratio":         min_compliance_ratio,
+        "discharge_target":             discharge_target,
+        "transmission_loss_pct":        transmission_loss_pct,
         "roundtrip_loss_pct":           roundtrip_loss_pct,
         "total_charged_mwh":            round(total_charged_mwh, 2),
         "psp_usable_charged_mwh":       psp_usable_charged_mwh,
@@ -248,8 +283,11 @@ def optimize_psp_dispatch(
         "max_soc_mwh":                  round(max(b['soc_end'] for b in block_results), 2),
         "end_soc_mwh":                  round(soc, 2),
         "compliant_blocks":             compliant_blocks_count,
+        "rtc_met_blocks":               rtc_met_blocks_count,
         "total_blocks":                 96,
         "fully_compliant":              compliant_blocks_count == 96,
+        "fully_rtc_met":                rtc_met_blocks_count == 96,
+        "rtc_shortfall_energy_mwh":     round(rtc_shortfall_energy_mwh, 2),
         "total_rtm_surplus_mwh":        round(total_rtm_surplus_mwh, 2),
         "total_net_delivered_mwh":       round(total_net_delivered_mwh, 2),
         # Carry-forward KPIs
@@ -310,6 +348,7 @@ def _count_psp_curtailed_blocks(psp_discharge_segments: list) -> int:
 
 def find_max_rtc_no_shortfall(
     forecast_df: pd.DataFrame,
+    transmission_loss_pct: float = 3.0,
     roundtrip_loss_pct: float = 20.0,
     min_compliance_ratio: float = 0.50,
     low: float = 0.0,
@@ -321,16 +360,12 @@ def find_max_rtc_no_shortfall(
     max_discharge: float = 50.0,
     initial_soc: float = 0.0,
     psp_discharge_segments: list = None,
+    discharge_target: str = DISCHARGE_TARGET_RTC,
 ) -> float:
     """
     Binary-search for the maximum RTC commitment (MW) such that all
     non-PSP-curtailed blocks are compliant (net_schedule >=
-    min_compliance_ratio * rtc_commitment).  Blocks where PSP discharge is
-    fully curtailed (maxDischargeMw == 0) are excluded from the target count
-    because PSP cannot bridge their generation gap.  This is Manikaran's
-    Suggestion for 'recommended'.
-
-    Returns the highest RTC where all evaluable blocks are compliant.
+    min_compliance_ratio * rtc_commitment).
     """
     # Blocks that are fully PSP-curtailed cannot be expected to be compliant
     curtailed_block_count = _count_psp_curtailed_blocks(psp_discharge_segments)
@@ -346,10 +381,12 @@ def find_max_rtc_no_shortfall(
             max_charge=max_charge,
             max_discharge=max_discharge,
             initial_soc=initial_soc,
+            transmission_loss_pct=transmission_loss_pct,
             roundtrip_loss_pct=roundtrip_loss_pct,
             min_compliance_ratio=min_compliance_ratio,
             min_dispatch_mw=min_dispatch_mw,
             psp_discharge_segments=psp_discharge_segments,
+            discharge_target=discharge_target,
         )
         return res['summary']['compliant_blocks']
 
@@ -371,6 +408,7 @@ def find_max_rtc_no_shortfall(
 
 def find_max_rtc_multiday(
     forecast_dfs: list,
+    transmission_loss_pct: float = 3.0,
     roundtrip_loss_pct: float = 20.0,
     min_compliance_ratio: float = 0.50,
     min_dispatch_mw: float = 6.0,
@@ -382,15 +420,12 @@ def find_max_rtc_multiday(
     high: float = 300.0,
     tolerance: float = 0.05,
     psp_discharge_segments: list = None,
+    discharge_target: str = DISCHARGE_TARGET_RTC,
 ) -> float:
     """
     Binary-search for the maximum RTC commitment (MW) such that all
     non-PSP-curtailed blocks across ALL provided days are compliant,
     with SOC correctly chained between days.
-
-    PSP-discharge-curtailed blocks (maxDischargeMw == 0) are excluded from
-    the compliance requirement — they cannot use PSP so should not penalise
-    the RTC recommendation.
     """
     # Compute how many blocks per day are excluded due to full PSP curtailment
     curtailed_block_count = _count_psp_curtailed_blocks(psp_discharge_segments)
@@ -409,10 +444,12 @@ def find_max_rtc_multiday(
                 max_soc=max_soc,
                 max_charge=max_charge,
                 max_discharge=max_discharge,
+                transmission_loss_pct=transmission_loss_pct,
                 roundtrip_loss_pct=roundtrip_loss_pct,
                 min_compliance_ratio=min_compliance_ratio,
                 min_dispatch_mw=min_dispatch_mw,
                 psp_discharge_segments=psp_discharge_segments,
+                discharge_target=discharge_target,
             )
             # Pass if all evaluable (non-PSP-curtailed) blocks are compliant
             if result['summary']['compliant_blocks'] < target_blocks_per_day:
@@ -440,11 +477,13 @@ def calculate_rtc_range(
     max_soc: float = 360.0,
     max_charge: float = 60.0,
     max_discharge: float = 50.0,
+    transmission_loss_pct: float = 3.0,
     roundtrip_loss_pct: float = 20.0,
     min_compliance_ratio: float = 0.50,
     min_dispatch_mw: float = 6.0,
     initial_soc: float = 0.0,
     psp_discharge_segments: list = None,
+    discharge_target: str = DISCHARGE_TARGET_RTC,
 ) -> dict:
     """
     Calculates the min, recommended (Manikaran's Suggestion), and max committable RTC
@@ -458,8 +497,6 @@ def calculate_rtc_range(
     Max RTC = P90 non-curtailment generation (higher risk, needs PSP backup for P10 blocks)
     Min RTC = 50% of P10 non-curtailment generation (regulatory safe floor)
     """
-    discharge_loss_factor = 1.0 / (1.0 - roundtrip_loss_pct / 100.0)
-
     # Split forecast into three groups based on curtailment type:
     #   full_curtail_df  : curtail_flag == True  (maxMw=0) — excluded from RTC stats
     #   partial_curtail_df: curtail_partial_flag == True (maxMw>0) — included in RTC stats
@@ -511,7 +548,7 @@ def calculate_rtc_range(
     gen_max    = float(np.max(stat_gen))
 
     # PSP discharge headroom per block (MW) assuming full tank
-    max_psp_per_block = min(max_discharge, max_soc / (0.25 * discharge_loss_factor))
+    max_psp_per_block = min(max_discharge, max_soc / 0.25)
 
     # Max RTC: P90 generation (you can hit this 90% of the time; PSP covers the rest)
     max_rtc = round(gen_p90, 2)
@@ -524,6 +561,7 @@ def calculate_rtc_range(
     # using the actual initial SOC so the search reflects real dispatch conditions.
     recommended_rtc = find_max_rtc_no_shortfall(
         forecast_df=forecast_df,
+        transmission_loss_pct=transmission_loss_pct,
         roundtrip_loss_pct=roundtrip_loss_pct,
         min_compliance_ratio=min_compliance_ratio,
         max_soc=max_soc,
@@ -534,9 +572,8 @@ def calculate_rtc_range(
         low=0.0,
         high=gen_p90 + max_psp_per_block,
         psp_discharge_segments=psp_discharge_segments,
+        discharge_target=discharge_target,
     )
-
-    # -- Curtailment loss reporting -------------------------------------------
     # Full curtailment loss: raw generation that was zeroed
     if len(full_curtail_df) > 0:
         fc_wind  = full_curtail_df['wind_mw_raw']  if 'wind_mw_raw'  in full_curtail_df.columns else full_curtail_df.get('wind_mw',  pd.Series(dtype=float))

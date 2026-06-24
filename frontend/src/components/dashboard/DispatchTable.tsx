@@ -5,10 +5,11 @@ import { BASE_URL } from '../../utils/constants';
 
 export default function DispatchTable() {
   const {
-    blocks, rtcCommitment, scheduleData,
+    blocks, rtcCommitment, scheduleData, summary,
     selectedDate, wtgCount, solarAc,
     curtailmentEnabled, curtailmentStart, curtailmentEnd,
-    roundtripLoss, maxSocMwh, maxChargeMw, maxDischargeMw, minDispatchMw,
+    roundtripLoss, transmissionLoss, maxSocMwh, maxChargeMw, maxDischargeMw, minDispatchMw,
+    dischargeTarget,
   } = useOptimizer();
 
   const [excelLoading, setExcelLoading] = useState(false);
@@ -25,12 +26,14 @@ export default function DispatchTable() {
         curtailment_enabled: String(curtailmentEnabled),
         curtailment_start_block: String(curtailmentStart),
         curtailment_end_block: String(curtailmentEnd),
+        transmission_loss_pct: String(transmissionLoss),
         roundtrip_loss_pct: String(roundtripLoss),
         min_compliance_ratio: '0.50',
         max_soc_mwh: String(maxSocMwh),
         max_charge_mw: String(maxChargeMw),
         max_discharge_mw: String(maxDischargeMw),
         min_dispatch_mw: String(minDispatchMw),
+        discharge_target: dischargeTarget,
       });
       const response = await fetch(`${BASE_URL}/api/export/excel?${params.toString()}`);
       if (!response.ok) throw new Error('Export failed');
@@ -58,6 +61,11 @@ export default function DispatchTable() {
         <div style={{ display: 'flex', alignItems: 'center', gap: '12px', fontSize: '12px', flexWrap: 'wrap' }}>
           <span className="cell-badge curtail">Wind + Solar Curtailment Active (B37–64)</span>
           <span className="cell-badge warn" style={{ background: 'rgba(220, 38, 38, 0.1)', color: '#ef4444' }}>Compliance Shortfall</span>
+          {(summary?.charge_window_expired_mwh ?? 0) > 0 && (
+            <span className="cell-badge warn" style={{ background: 'rgba(239,68,68,0.1)', color: '#f87171' }}>
+              24h window expired: {summary!.charge_window_expired_mwh!.toFixed(2)} MWh
+            </span>
+          )}
           <button
             id="btn-download-excel"
             onClick={handleExcelDownload}
@@ -119,13 +127,15 @@ export default function DispatchTable() {
               <th>Wind MW</th>
               <th>Solar MW</th>
               <th>Combined Generation</th>
-              <th>PSP Action</th>
+              <th>PSP Action MW</th>
               <th>SoC end</th>
               <th>Net Schedule</th>
               <th>Target Floor</th>
               <th style={{ color: 'var(--color-rtm)' }}>RTM MW</th>
               <th style={{ color: '#34d399', fontSize: '11px' }}>Carry Budget</th>
               <th style={{ color: '#34d399', fontSize: '11px' }}>Carry Disch.</th>
+              <th style={{ color: '#ef4444', fontSize: '11px' }}>Window Expired</th>
+              <th style={{ color: '#fbbf24', fontSize: '11px' }}>Window Outst.</th>
               <th style={{ color: '#ef4444', fontSize: '11px' }}>Shortfall MWh</th>
               <th>Status</th>
             </tr>
@@ -179,6 +189,33 @@ export default function DispatchTable() {
                   </td>
                   <td className="mono-col" style={{ color: b.carry_discharge_mw > 0 ? '#6ee7b7' : 'var(--text-muted)', fontSize: '12px' }}>
                     {b.carry_discharge_mw > 0 ? b.carry_discharge_mw.toFixed(2) : '—'}
+                  </td>
+                  <td className="mono-col">
+                    {(b.charge_window_expired_mwh ?? 0) > 0 ? (
+                      <span style={{
+                        background: 'rgba(239,68,68,0.12)',
+                        color: '#f87171',
+                        border: '1px solid rgba(239,68,68,0.25)',
+                        borderRadius: '6px',
+                        padding: '2px 7px',
+                        fontSize: '11px',
+                        fontWeight: '600',
+                        fontFamily: 'var(--font-mono)',
+                        whiteSpace: 'nowrap',
+                      }}>
+                        {(b.charge_window_expired_mwh ?? 0).toFixed(3)} MWh
+                      </span>
+                    ) : (
+                      <span style={{ color: 'var(--text-muted)', fontSize: '12px' }}>—</span>
+                    )}
+                  </td>
+                  <td className="mono-col" style={{
+                    color: (b.charge_window_outstanding_mwh ?? 0) > 0 ? '#fbbf24' : 'var(--text-muted)',
+                    fontSize: '12px',
+                  }}>
+                    {(b.charge_window_outstanding_mwh ?? 0) > 0
+                      ? (b.charge_window_outstanding_mwh ?? 0).toFixed(3)
+                      : '—'}
                   </td>
                   {/* Shortfall MWh cell */}
                   <td className="mono-col">

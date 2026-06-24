@@ -1,21 +1,22 @@
 import { useState } from 'react';
 import { useOptimizer } from '../context/OptimizerContext';
+import { computeEnergyAccounting } from '../utils/energyAccounting';
 import { AlertTriangle, CheckCircle2, Menu, X } from 'lucide-react';
 
 // Dashboard components
 import KPICards from '../components/dashboard/KPICards';
+import EnergyAccountingRow from '../components/dashboard/EnergyAccountingRow';
 import CarryForwardBar from '../components/dashboard/CarryForwardBar';
 import DispatchChart from '../components/dashboard/DispatchChart';
 import PSPTankGauge from '../components/dashboard/PSPTankGauge';
 import SoCTimelineModal from '../components/dashboard/SoCTimelineModal';
 import DispatchTable from '../components/dashboard/DispatchTable';
-import PowerWastagePanel from '../components/dashboard/PowerWastagePanel';
 
 // Config sidebar
 import ConfigPanel from '../components/config/ConfigPanel';
 
 export default function SingleDayPage() {
-  const { scheduleData, loading, summary, error } = useOptimizer();
+  const { scheduleData, loading, summary, error, blocks, rtcCommitment } = useOptimizer();
 
   // Mobile drawer
   const [sidebarOpen, setSidebarOpen] = useState(false);
@@ -66,6 +67,12 @@ export default function SingleDayPage() {
               <span>{summary.fully_compliant ? 'FULLY COMPLIANT' : 'SHORTFALL WARNING'}</span>
             </div>
           )}
+          {loading && scheduleData && (
+            <div className="status-badge" style={{ background: 'rgba(99,102,241,0.12)', borderColor: 'rgba(99,102,241,0.35)', color: '#a5b4fc' }}>
+              <div className="spinner" style={{ width: '12px', height: '12px', borderRadius: '50%', border: '2px solid rgba(99,102,241,0.2)', borderTopColor: '#818cf8', animation: 'spin 1s linear infinite' }} />
+              <span>Recalculating…</span>
+            </div>
+          )}
 
           {/* View toggle pills — hidden per product request
           <div className="view-toggles">
@@ -88,12 +95,15 @@ export default function SingleDayPage() {
         </div>
       </div>
 
-      {/* KPI Cards + Carry Bar + Power Wastage */}
+      {/* KPI Cards + Carry Bar */}
       {summary && (
         <>
+          <EnergyAccountingRow
+            metrics={computeEnergyAccounting(blocks, rtcCommitment)}
+            subtitle="Energy scheduled to the consumer grid — 96 × 15-min blocks"
+          />
           <KPICards />
           <CarryForwardBar />
-          <PowerWastagePanel />
         </>
       )}
 

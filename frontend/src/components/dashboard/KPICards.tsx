@@ -16,10 +16,10 @@ export default function KPICards() {
   return (
     <section className="kpi-grid">
 
-      {/* ── Total Delivered to Consumer ── */}
+      {/* ── Total Schedule ── */}
       <div className="glass-panel kpi-card" style={{ '--accent-color': '#10b981' } as React.CSSProperties}>
         <div className="kpi-header">
-          <span>Delivered to Consumer</span>
+          <span>Total Schedule</span>
           <Activity size={16} style={{ color: '#10b981' }} />
         </div>
         <div className="kpi-value" style={{ color: '#34d399' }}>

@@ -4,12 +4,14 @@ import {
   PSP_DEFAULT_MAX_CHARGE_MW,
   PSP_DEFAULT_MAX_DISCHARGE_MW,
   PSP_DEFAULT_MIN_DISPATCH_MW,
+  PSP_DEFAULT_TRANSMISSION_LOSS_PCT,
   PSP_MAX_CAPACITY_MWH,
+  PSP_MAX_TRANSMISSION_LOSS_PCT,
   PSP_SLIDER_MAX_CHARGE_MW,
   PSP_SLIDER_MAX_DISCHARGE_MW,
   PSP_SLIDER_MAX_MIN_DISPATCH_MW,
 } from './constants';
-import type { CurtailmentSegment, PspDischargeSegment } from '../types';
+import type { CurtailmentSegment, PspDischargeSegment, DischargeTarget } from '../types';
 import { loadStateFromDb, saveStateToDb, STATE_KEYS } from './apiStateStorage';
 
 const STORAGE_KEY = 'hindalco-optimizer-config';
@@ -29,12 +31,15 @@ export interface PersistedOptimizerConfig {
   curtailmentStart: number;  // legacy — used only if curtailmentSegments absent in stored JSON
   curtailmentEnd: number;    // legacy
   roundtripLoss: number;
+  transmissionLoss: number;
   initialSocMwh: number;
   carryFromDate: string | null;
   prevDayChargeSchedule: number[] | null;
   blockOverrides: Record<number, { wind_mw: string; solar_mw: string }>;
   // PSP Discharge Curtailment segments
   pspDischargeSegments: PspDischargeSegment[];
+  /** PSP discharge target: rtc_commitment (default) or compliance_floor */
+  dischargeTarget: DischargeTarget;
 }
 
 export const DEFAULT_OPTIMIZER_CONFIG: PersistedOptimizerConfig = {
@@ -51,11 +56,13 @@ export const DEFAULT_OPTIMIZER_CONFIG: PersistedOptimizerConfig = {
   curtailmentStart: 37,  // legacy fallback
   curtailmentEnd: 64,    // legacy fallback
   roundtripLoss: 20,
+  transmissionLoss: PSP_DEFAULT_TRANSMISSION_LOSS_PCT,
   initialSocMwh: 0,
   carryFromDate: null,
   prevDayChargeSchedule: null,
   blockOverrides: {},
   pspDischargeSegments: [],
+  dischargeTarget: 'rtc_commitment',
 };
 
 function clamp(n: number, min: number, max: number): number {
@@ -145,6 +152,9 @@ function sanitize(raw: Record<string, unknown>): PersistedOptimizerConfig {
     }, []);
   }
 
+  const dischargeTarget: DischargeTarget =
+    raw.dischargeTarget === 'compliance_floor' ? 'compliance_floor' : 'rtc_commitment';
+
   return {
     selectedDate: date,
     wtgCount: clamp(typeof raw.wtgCount === 'number' ? raw.wtgCount : d.wtgCount, 1, 59),
@@ -159,12 +169,54 @@ function sanitize(raw: Record<string, unknown>): PersistedOptimizerConfig {
     curtailmentStart: clamp(typeof raw.curtailmentStart === 'number' ? raw.curtailmentStart : d.curtailmentStart, 1, 96),
     curtailmentEnd:   clamp(typeof raw.curtailmentEnd   === 'number' ? raw.curtailmentEnd   : d.curtailmentEnd,   1, 96),
     roundtripLoss: clamp(typeof raw.roundtripLoss === 'number' ? raw.roundtripLoss : d.roundtripLoss, 10, 30),
+    transmissionLoss: clamp(
+      typeof raw.transmissionLoss === 'number' ? raw.transmissionLoss : d.transmissionLoss,
+      0,
+      PSP_MAX_TRANSMISSION_LOSS_PCT,
+    ),
     initialSocMwh: clamp(typeof raw.initialSocMwh === 'number' ? raw.initialSocMwh : d.initialSocMwh, 0, PSP_MAX_CAPACITY_MWH),
     carryFromDate,
     prevDayChargeSchedule,
     blockOverrides,
     pspDischargeSegments,
+    dischargeTarget,
   };
+}
+
+export function deriveAutoChargeMw(maxSocMwh: number): number {
+  return Math.round((maxSocMwh / 6) * 2) / 2;
+}
+
+export function deriveAutoDischargeMw(maxSocMwh: number): number {
+  return Math.round((maxSocMwh / 6) * 2) / 2;
+}
+
+export function deriveAutoMinDispatchMw(maxDischargeMw: number): number {
+  return Math.round((maxDischargeMw / 10) * 2) / 2;
+}
+
+/** Infer whether saved charge/discharge/min values were manually overridden. */
+export function inferOverrideFlags(config: PersistedOptimizerConfig): {
+  chargeOverridden: boolean;
+  dischargeOverridden: boolean;
+  minDispatchOverridden: boolean;
+} {
+  const autoCharge = deriveAutoChargeMw(config.maxSocMwh);
+  const autoDischarge = deriveAutoDischargeMw(config.maxSocMwh);
+  const chargeOverridden = Math.abs(config.maxChargeMw - autoCharge) > 0.01;
+  const dischargeOverridden = Math.abs(config.maxDischargeMw - autoDischarge) > 0.01;
+  const effectiveDischarge = dischargeOverridden ? config.maxDischargeMw : autoDischarge;
+  const autoMinDispatch = deriveAutoMinDispatchMw(effectiveDischarge);
+  const minDispatchOverridden = Math.abs(config.minDispatchMw - autoMinDispatch) > 0.01;
+  return { chargeOverridden, dischargeOverridden, minDispatchOverridden };
+}
+
+export function hasSavedOptimizerConfig(): boolean {
+  try {
+    return !!localStorage.getItem(STORAGE_KEY);
+  } catch {
+    return false;
+  }
 }
 
 export function loadOptimizerConfig(): PersistedOptimizerConfig {
@@ -179,19 +231,35 @@ export function loadOptimizerConfig(): PersistedOptimizerConfig {
   }
 }
 
-/** Load from PostgreSQL via API; falls back to localStorage defaults. */
-export async function loadOptimizerConfigFromDb(): Promise<PersistedOptimizerConfig> {
+/**
+ * Load from PostgreSQL via API; falls back to localStorage defaults.
+ * When preferLocal is true and localStorage already has config, returns local
+ * without overwriting localStorage (avoids clobbering in-session edits).
+ */
+export async function loadOptimizerConfigFromDb(options?: {
+  preferLocal?: boolean;
+}): Promise<PersistedOptimizerConfig> {
+  const local = loadOptimizerConfig();
+  const hasLocal = hasSavedOptimizerConfig();
+
+  if (options?.preferLocal && hasLocal) {
+    return local;
+  }
+
   const fromDb = await loadStateFromDb<PersistedOptimizerConfig>(STATE_KEYS.optimizerConfig);
   if (fromDb && isRecord(fromDb)) {
     const sanitized = sanitize(fromDb as unknown as Record<string, unknown>);
-    try {
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(sanitized));
-    } catch {
-      // ignore
+    if (!hasLocal) {
+      try {
+        localStorage.setItem(STORAGE_KEY, JSON.stringify(sanitized));
+      } catch {
+        // ignore
+      }
+      return sanitized;
     }
-    return sanitized;
+    return local;
   }
-  return loadOptimizerConfig();
+  return local;
 }
 
 export function saveOptimizerConfig(config: PersistedOptimizerConfig): void {

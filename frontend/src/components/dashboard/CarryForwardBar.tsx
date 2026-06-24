@@ -4,8 +4,10 @@ import { CONTRACT_DATES, formatContractDateLabel } from '../../utils/constants';
 export default function CarryForwardBar() {
   const {
     summary, scheduleData, carryFromDate, initialSocMwh,
-    roundtripLoss, selectedDate, handleRollToNextDay, handleClearCarry,
+    roundtripLoss, transmissionLoss, selectedDate, handleRollToNextDay, handleClearCarry,
   } = useOptimizer();
+
+  const netChargeEfficiency = (1 - transmissionLoss / 100) * (1 - roundtripLoss / 100);
 
   if (!summary) return null;
 
@@ -33,7 +35,7 @@ export default function CarryForwardBar() {
           <div style={{ fontSize: '12px', color: '#64748b' }}>
             End-of-day SoC: <strong style={{ color: '#e2e8f0' }}>{summary.end_soc_mwh.toFixed(1)} MWh</strong>
             &nbsp;·&nbsp; Available carry energy (after losses): <strong style={{ color: '#e2e8f0' }}>
-              {((scheduleData?.carry_forward?.today_charge_schedule ?? []).reduce((a, c) => a + c, 0) * 0.25 * (1 - roundtripLoss / 100)).toFixed(1)} MWh
+              {((scheduleData?.carry_forward?.today_charge_schedule ?? []).reduce((a, c) => a + c, 0) * 0.25 * netChargeEfficiency).toFixed(1)} MWh
             </strong>
           </div>
         </div>

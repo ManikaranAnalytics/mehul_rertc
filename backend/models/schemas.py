@@ -1,21 +1,25 @@
 from pydantic import BaseModel, Field, model_validator
-from typing import List, Optional, Dict, Any
+from typing import List, Optional, Dict, Any, Literal
 
 from services.constants import (
     PSP_DEFAULT_CAPACITY_MWH,
     PSP_DEFAULT_MAX_CHARGE_MW,
     PSP_DEFAULT_MAX_DISCHARGE_MW,
     PSP_DEFAULT_MIN_DISPATCH_MW,
+    PSP_DEFAULT_TRANSMISSION_LOSS_PCT,
     PSP_MAX_CAPACITY_MWH,
     PSP_MAX_CHARGE_MW,
     PSP_MAX_DISCHARGE_MW,
     PSP_MAX_MIN_DISPATCH_MW,
+    PSP_MAX_TRANSMISSION_LOSS_PCT,
     PSP_MIN_CAPACITY_MWH,
 )
 
 _PSP_MAX = PSP_MAX_CAPACITY_MWH
 _PSP_MIN = PSP_MIN_CAPACITY_MWH
 _PSP_DEFAULT = PSP_DEFAULT_CAPACITY_MWH
+
+DischargeTarget = Literal["rtc_commitment", "compliance_floor"]
 
 # ── Curtailment Segment ─────────────────────────────────────────────────────
 
@@ -78,12 +82,20 @@ class ScheduleRequest(BaseModel):
         None, description="Block-range caps on PSP discharge. 0 MW = fully blocked; >0 = partial cap."
     )
     # PSP config
+    transmission_loss_pct: float = Field(
+        PSP_DEFAULT_TRANSMISSION_LOSS_PCT, ge=0.0, le=PSP_MAX_TRANSMISSION_LOSS_PCT,
+        description="Grid-to-PSP transmission loss % applied before PSP round-trip loss on charge",
+    )
     roundtrip_loss_pct: float = Field(20.0, ge=0.0, le=50.0, description="PSP round-trip loss % (e.g. 20 = 20% loss)")
     min_compliance_ratio: float = Field(0.50, ge=0.5, le=1.0, description="Min delivery as fraction of RTC (0.50 = 50%)")
     max_soc_mwh: float = Field(_PSP_DEFAULT, ge=_PSP_MIN, le=_PSP_MAX, description=f"PSP maximum storage capacity in MWh (up to {_PSP_MAX:.0f} MWh)")
     max_charge_mw: float = Field(PSP_DEFAULT_MAX_CHARGE_MW, ge=0.0, le=PSP_MAX_CHARGE_MW, description="Max PSP drawal (charging) rate in MW")
     max_discharge_mw: float = Field(PSP_DEFAULT_MAX_DISCHARGE_MW, ge=0.0, le=PSP_MAX_DISCHARGE_MW, description="Max PSP injection (discharge) rate in MW")
     min_dispatch_mw: float = Field(PSP_DEFAULT_MIN_DISPATCH_MW, ge=0.0, le=PSP_MAX_MIN_DISPATCH_MW, description="Minimum PSP charge/discharge MW (CERC — 0 or >= this value)")
+    discharge_target: DischargeTarget = Field(
+        "rtc_commitment",
+        description="PSP discharge target: full RTC commitment or 50% compliance floor only",
+    )
     # Carry-forward from previous day
     initial_soc_mwh: float = Field(0.0, ge=0.0, le=_PSP_MAX, description="SoC carried forward from end of previous day (MWh)")
     prev_day_charge_schedule: Optional[List[float]] = Field(
@@ -130,6 +142,8 @@ class ScheduleSummary(BaseModel):
     rtc_commitment_mw: float
     min_schedule_mw: float
     min_compliance_ratio: float
+    discharge_target: DischargeTarget = "rtc_commitment"
+    transmission_loss_pct: float = PSP_DEFAULT_TRANSMISSION_LOSS_PCT
     roundtrip_loss_pct: float
     total_charged_mwh: float
     psp_usable_charged_mwh: float     # Actual energy recoverable after losses
@@ -139,8 +153,11 @@ class ScheduleSummary(BaseModel):
     max_soc_mwh: float
     end_soc_mwh: float
     compliant_blocks: int
+    rtc_met_blocks: int = 0
     total_blocks: int
     fully_compliant: bool
+    fully_rtc_met: bool = False
+    rtc_shortfall_energy_mwh: float = 0.0
     total_rtm_surplus_mwh: float
     # Carry-forward summary
     initial_soc_mwh: float            # SoC carried in from previous day
@@ -178,6 +195,7 @@ class MaxRTCRequest(BaseModel):
     curtailment_start_block: int = Field(37, ge=1, le=96)
     curtailment_end_block: int = Field(64, ge=1, le=96)
     psp_discharge_segments: Optional[List[PspDischargeSegment]] = Field(None)
+    transmission_loss_pct: float = Field(PSP_DEFAULT_TRANSMISSION_LOSS_PCT, ge=0.0, le=PSP_MAX_TRANSMISSION_LOSS_PCT)
     roundtrip_loss_pct: float = Field(20.0, ge=0.0, le=50.0)
     min_compliance_ratio: float = Field(0.50, ge=0.5, le=1.0)
     initial_soc_mwh: float = Field(0.0, ge=0.0, le=_PSP_MAX, description="SoC at start of day (MWh) — used in dispatch simulation")
@@ -185,6 +203,7 @@ class MaxRTCRequest(BaseModel):
     max_charge_mw: float = Field(PSP_DEFAULT_MAX_CHARGE_MW, ge=0.0, le=PSP_MAX_CHARGE_MW)
     max_discharge_mw: float = Field(PSP_DEFAULT_MAX_DISCHARGE_MW, ge=0.0, le=PSP_MAX_DISCHARGE_MW)
     min_dispatch_mw: float = Field(PSP_DEFAULT_MIN_DISPATCH_MW, ge=0.0, le=PSP_MAX_MIN_DISPATCH_MW, description="Minimum PSP charge/discharge MW (CERC compliance)")
+    discharge_target: DischargeTarget = Field("rtc_commitment", description="PSP discharge target mode")
 
 
 class MaxRTCResponse(BaseModel):
@@ -220,6 +239,7 @@ class RTCRangeRequest(BaseModel):
     curtailment_start_block: int = Field(37, ge=1, le=96)
     curtailment_end_block: int = Field(64, ge=1, le=96)
     psp_discharge_segments: Optional[List[PspDischargeSegment]] = Field(None)
+    transmission_loss_pct: float = Field(PSP_DEFAULT_TRANSMISSION_LOSS_PCT, ge=0.0, le=PSP_MAX_TRANSMISSION_LOSS_PCT)
     roundtrip_loss_pct: float = Field(20.0, ge=0.0, le=50.0)
     min_compliance_ratio: float = Field(0.50, ge=0.5, le=1.0)
     max_soc_mwh: float = Field(_PSP_DEFAULT, ge=_PSP_MIN, le=_PSP_MAX)
@@ -227,6 +247,7 @@ class RTCRangeRequest(BaseModel):
     max_discharge_mw: float = Field(PSP_DEFAULT_MAX_DISCHARGE_MW, ge=0.0, le=PSP_MAX_DISCHARGE_MW)
     min_dispatch_mw: float = Field(PSP_DEFAULT_MIN_DISPATCH_MW, ge=0.0, le=PSP_MAX_MIN_DISPATCH_MW)
     initial_soc_mwh: float = Field(0.0, ge=0.0, le=_PSP_MAX, description="SoC at start of day (MWh) — used in the Manikaran Suggestion binary search")
+    discharge_target: DischargeTarget = Field("rtc_commitment", description="PSP discharge target mode")
     # Optional data overrides
     block_overrides: Optional[List[Dict[str, Any]]] = Field(None)
 
@@ -258,6 +279,7 @@ class MultiDayMaxRTCRequest(BaseModel):
     curtailment_start_block: int = Field(37, ge=1, le=96)
     curtailment_end_block: int = Field(64, ge=1, le=96)
     psp_discharge_segments: Optional[List[PspDischargeSegment]] = Field(None)
+    transmission_loss_pct: float = Field(PSP_DEFAULT_TRANSMISSION_LOSS_PCT, ge=0.0, le=PSP_MAX_TRANSMISSION_LOSS_PCT)
     roundtrip_loss_pct: float = Field(20.0, ge=0.0, le=50.0)
     min_compliance_ratio: float = Field(0.50, ge=0.5, le=1.0)
     max_soc_mwh: float = Field(_PSP_DEFAULT, ge=_PSP_MIN, le=_PSP_MAX)
@@ -265,6 +287,7 @@ class MultiDayMaxRTCRequest(BaseModel):
     max_discharge_mw: float = Field(PSP_DEFAULT_MAX_DISCHARGE_MW, ge=0.0, le=PSP_MAX_DISCHARGE_MW)
     min_dispatch_mw: float = Field(PSP_DEFAULT_MIN_DISPATCH_MW, ge=0.0, le=PSP_MAX_MIN_DISPATCH_MW)
     initial_soc_mwh: float = Field(0.0, ge=0.0, le=_PSP_MAX, description="SoC at start of day 1 (default 0 = clean slate)")
+    discharge_target: DischargeTarget = Field("rtc_commitment", description="PSP discharge target mode")
 
 
 class MultiDayMaxRTCResponse(BaseModel):

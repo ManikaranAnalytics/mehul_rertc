@@ -60,7 +60,9 @@ def _psp_params(request) -> dict:
         "max_discharge": request.max_discharge_mw,
         "min_dispatch_mw": request.min_dispatch_mw,
         "roundtrip_loss_pct": request.roundtrip_loss_pct,
+        "transmission_loss_pct": request.transmission_loss_pct,
         "min_compliance_ratio": request.min_compliance_ratio,
+        "discharge_target": request.discharge_target,
     }
 
 
@@ -114,8 +116,9 @@ def get_optimal_schedule(request: ScheduleRequest):
     Accepts turbine count, solar capacity, RTC commitment, and a date.
     Calculates the 96-block generation forecast and runs the sequential PSP optimization.
 
-    Priority: RTC first → PSP only charges on surplus, discharges only on shortfall.
-    50% of RTC is the compliance floor (regulatory minimum delivery).
+    Priority: discharge PSP toward full RTC commitment when generation is below RTC
+    and SoC is available; charge surplus above RTC. 50% of RTC is the regulatory
+    compliance floor (pass/fail), not the discharge target.
     """
     try:
         active_segments = resolve_active_segments(

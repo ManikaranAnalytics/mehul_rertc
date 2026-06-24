@@ -53,6 +53,7 @@ def process_charge_window_block(
     global_block: int,
     psp_charge_mw: float,
     psp_discharge_mw: float,
+    charge_efficiency: float = 1.0,
 ) -> tuple[list[dict[str, Any]], dict[str, float]]:
     """
     Update charge lots for one 15-minute block.
@@ -83,7 +84,7 @@ def process_charge_window_block(
         discharged_mwh += take
     lots = [lot for lot in lots if lot["remaining_mwh"] > 1e-9]
 
-    charge_mwh = max(0.0, psp_charge_mw) * BLOCK_HOURS
+    charge_mwh = max(0.0, psp_charge_mw) * BLOCK_HOURS * charge_efficiency
     if charge_mwh > 1e-9:
         lots.append({
             "charged_at": global_block,
