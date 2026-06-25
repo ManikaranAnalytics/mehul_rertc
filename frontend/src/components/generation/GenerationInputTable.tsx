@@ -10,7 +10,6 @@ import {
 import { lookupWindMW } from '../../utils/powerCurve';
 import {
   resetJulyGenerationDb,
-  dbRowsToGenEdits,
   downloadGenerationTemplate,
   fetchGenerationFromDb,
   uploadGenerationCsv,
