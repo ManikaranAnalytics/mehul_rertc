@@ -54,3 +54,19 @@ class GenerationInput(Base):
         onupdate=func.now(),
         nullable=False,
     )
+
+
+class GenerationUploadMeta(Base):
+    """Per-date upload metadata (solar capacity at upload, CSV format). Survives redeploys."""
+
+    __tablename__ = "generation_upload_meta"
+
+    date: Mapped[str] = mapped_column(String(10), primary_key=True)
+    solar_ac_mw: Mapped[float] = mapped_column(Float, nullable=False, default=60.0)
+    solar_mode: Mapped[str] = mapped_column(String(16), nullable=False, default="absolute")
+    uploaded_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        server_default=func.now(),
+        onupdate=func.now(),
+        nullable=False,
+    )

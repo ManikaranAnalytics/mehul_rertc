@@ -169,7 +169,7 @@ export default function GenerationInputTable() {
       await refreshGenerationEdits();
       setUploadMessage({
         type: 'success',
-        text: `Saved ${result.rows_upserted} rows across ${result.dates_updated} date(s) to PostgreSQL. Data persists — no re-upload needed.`,
+        text: `Saved ${result.rows_upserted} rows across ${result.dates_updated} date(s) to PostgreSQL permanently.`,
       });
     } catch (err) {
       const message = err instanceof Error ? err.message : 'Could not upload file.';
@@ -232,7 +232,7 @@ export default function GenerationInputTable() {
           <div>
             <h2 className="generation-input-title">Generation Input</h2>
             <p className="generation-input-subtitle">
-              Upload CSV once — data is stored in PostgreSQL and feeds single-day and multi-day analysis.
+              Upload CSV once — data is saved permanently in PostgreSQL and shared across all users and sessions.
               Dates after {formatSimulationDate(CONTRACT_END_DATE)} are blocked.
             </p>
           </div>

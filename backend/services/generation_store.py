@@ -14,10 +14,10 @@ from sqlalchemy import delete, select
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.orm import Session
 
-from db.models import GenerationInput
+from db.models import GenerationInput, GenerationUploadMeta
 from services.constants import CONTRACT_END_DATE, CONTRACT_START_DATE, JULY_START_DATE
 from services.forecast import compute_scaled_solar_mw, get_power_for_wind_speed
-from services.persistence import GENERATION_UPLOAD_META_KEY, get_state, set_state
+from services.persistence import GENERATION_UPLOAD_META_KEY, delete_state, get_state
 
 BLOCK_TIMES = [
     f"{h:02d}:{m:02d}:00"
@@ -28,13 +28,59 @@ BLOCK_TIMES = [
 DEFAULT_SOLAR_AC_MW = 60.0
 
 
-def get_upload_meta_map(db: Session) -> dict[str, dict[str, Any]]:
-    """Per-date upload metadata: solar_ac_mw at upload time and storage mode."""
+def _legacy_upload_meta_from_app_state(db: Session) -> dict[str, dict[str, Any]]:
     return dict(get_state(db, GENERATION_UPLOAD_META_KEY) or {})
 
 
+def _migrate_legacy_upload_meta(db: Session) -> None:
+    """One-time move from app_state JSON blob to generation_upload_meta table."""
+    legacy = _legacy_upload_meta_from_app_state(db)
+    if not legacy:
+        return
+    for date_str, entry in legacy.items():
+        try:
+            validate_contract_date(date_str)
+        except HTTPException:
+            continue
+        solar_ac = float(entry.get("solar_ac_mw") or DEFAULT_SOLAR_AC_MW)
+        mode = str(entry.get("mode") or "absolute")
+        stmt = insert(GenerationUploadMeta).values(
+            date=date_str,
+            solar_ac_mw=solar_ac,
+            solar_mode=mode,
+        )
+        stmt = stmt.on_conflict_do_update(
+            index_elements=["date"],
+            set_={
+                "solar_ac_mw": stmt.excluded.solar_ac_mw,
+                "solar_mode": stmt.excluded.solar_mode,
+            },
+        )
+        db.execute(stmt)
+    db.commit()
+    delete_state(db, GENERATION_UPLOAD_META_KEY)
+
+
+def get_upload_meta_map(db: Session) -> dict[str, dict[str, Any]]:
+    """Per-date upload metadata persisted in PostgreSQL (survives redeploys)."""
+    rows = db.scalars(select(GenerationUploadMeta)).all()
+    if not rows:
+        _migrate_legacy_upload_meta(db)
+        rows = db.scalars(select(GenerationUploadMeta)).all()
+    return {
+        r.date: {"solar_ac_mw": float(r.solar_ac_mw), "mode": r.solar_mode}
+        for r in rows
+    }
+
+
 def get_date_upload_meta(db: Session, for_date: str) -> dict[str, Any] | None:
-    return get_upload_meta_map(db).get(for_date)
+    row = db.get(GenerationUploadMeta, for_date)
+    if row is not None:
+        return {"solar_ac_mw": float(row.solar_ac_mw), "mode": row.solar_mode}
+    legacy = _legacy_upload_meta_from_app_state(db)
+    if for_date in legacy:
+        return legacy[for_date]
+    return None
 
 
 def set_upload_meta_for_dates(
@@ -43,13 +89,26 @@ def set_upload_meta_for_dates(
     *,
     solar_ac_mw: float,
     mode: str,
+    commit: bool = True,
 ) -> None:
     """Record how solar_mw was stored for each uploaded date (absolute MW or 175 MW reference base)."""
-    meta = get_upload_meta_map(db)
-    entry = {"solar_ac_mw": float(solar_ac_mw), "mode": mode}
     for d in dates:
-        meta[d] = entry
-    set_state(db, GENERATION_UPLOAD_META_KEY, meta)
+        validate_contract_date(d)
+        stmt = insert(GenerationUploadMeta).values(
+            date=d,
+            solar_ac_mw=float(solar_ac_mw),
+            solar_mode=mode,
+        )
+        stmt = stmt.on_conflict_do_update(
+            index_elements=["date"],
+            set_={
+                "solar_ac_mw": stmt.excluded.solar_ac_mw,
+                "solar_mode": stmt.excluded.solar_mode,
+            },
+        )
+        db.execute(stmt)
+    if commit:
+        db.commit()
 
 
 def scale_stored_solar_mw(
@@ -418,17 +477,18 @@ def upsert_generation_rows(
         db.execute(stmt)
         total += len(values)
 
-    db.commit()
-
     if solar_ac_mw is not None and solar_mode is not None:
         set_upload_meta_for_dates(
             db,
             list(by_date.keys()),
             solar_ac_mw=solar_ac_mw,
             mode=solar_mode,
+            commit=False,
         )
 
-    return {"rows_upserted": total, "dates_updated": len(by_date)}
+    db.commit()
+
+    return {"rows_upserted": total, "dates_updated": len(by_date), "persisted": True}
 
 
 def get_generation_for_date(
@@ -531,15 +591,12 @@ def clear_july_generation_data(db: Session) -> int:
             GenerationInput.date <= CONTRACT_END_DATE,
         )
     )
-    meta = get_upload_meta_map(db)
-    for key in list(meta.keys()):
-        if key >= JULY_START_DATE:
-            del meta[key]
-    if meta:
-        set_state(db, GENERATION_UPLOAD_META_KEY, meta)
-    else:
-        from services.persistence import delete_state
-        delete_state(db, GENERATION_UPLOAD_META_KEY)
+    db.execute(
+        delete(GenerationUploadMeta).where(
+            GenerationUploadMeta.date >= JULY_START_DATE,
+            GenerationUploadMeta.date <= CONTRACT_END_DATE,
+        )
+    )
     db.commit()
     return result.rowcount or 0
 
