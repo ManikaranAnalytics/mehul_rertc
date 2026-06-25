@@ -65,11 +65,15 @@ if _SERVE_FRONTEND and os.path.isdir(FRONTEND_DIST):
     if _assets.is_dir():
         app.mount("/assets", StaticFiles(directory=str(_assets)), name="static-assets")
 
+    _NO_CACHE = {"Cache-Control": "no-cache, no-store, must-revalidate"}
+    _ASSET_CACHE = {"Cache-Control": "public, max-age=31536000, immutable"}
+
     @app.get("/{spa_path:path}")
     async def serve_spa(spa_path: str):
         if spa_path and (_dist / spa_path).is_file():
-            return FileResponse(_dist / spa_path)
-        return FileResponse(_dist / "index.html")
+            headers = _ASSET_CACHE if spa_path.startswith("assets/") else _NO_CACHE
+            return FileResponse(_dist / spa_path, headers=headers)
+        return FileResponse(_dist / "index.html", headers=_NO_CACHE)
 else:
     @app.get("/")
     def read_root():

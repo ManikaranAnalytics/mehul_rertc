@@ -10,10 +10,16 @@ COPY frontend/package.json frontend/package-lock.json ./
 RUN npm ci --silent
 
 COPY frontend/ ./
-RUN npm run build
+
+# Busts Docker layer cache when deploy.sh passes a new GIT_COMMIT
+ARG GIT_COMMIT=unknown
+RUN echo "frontend build @ ${GIT_COMMIT}" && npm run build
 
 # ── Stage 2: backend + static SPA ─────────────────────────────────────────────
 FROM python:3.11-slim
+
+ARG GIT_COMMIT=unknown
+LABEL org.opencontainers.image.revision="${GIT_COMMIT}"
 
 RUN addgroup --system appgroup && adduser --system --ingroup appgroup appuser
 
@@ -45,7 +51,8 @@ ENV PORT=8012 \
     WEB_CONCURRENCY=2 \
     DEV_RELOAD=false \
     SERVE_FRONTEND=true \
-    FRONTEND_DIST=/app/frontend/dist
+    FRONTEND_DIST=/app/frontend/dist \
+    GIT_COMMIT=${GIT_COMMIT}
 
 HEALTHCHECK --interval=30s --timeout=5s --start-period=15s --retries=3 \
   CMD python -c "import os,urllib.request; urllib.request.urlopen(f'http://localhost:{os.getenv(\"PORT\",\"8012\")}/api/health')" || exit 1

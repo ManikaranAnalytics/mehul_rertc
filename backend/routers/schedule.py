@@ -1,3 +1,5 @@
+import os
+
 import pandas as pd
 from fastapi import APIRouter, HTTPException, Depends
 from sqlalchemy.orm import Session
@@ -18,7 +20,10 @@ router = APIRouter()
 @router.get("/health", tags=["Health"])
 def health_check():
     """Lightweight liveness probe for Docker / load-balancer health checks."""
-    return {"status": "ok"}
+    return {
+        "status": "ok",
+        "git_commit": os.getenv("GIT_COMMIT", "unknown"),
+    }
 
 
 def _apply_overrides(
