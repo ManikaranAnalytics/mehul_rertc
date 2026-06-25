@@ -34,8 +34,6 @@ services:
     build:
       context: ..
       dockerfile: backend/Dockerfile
-      args:
-        GIT_COMMIT: ${GIT_COMMIT:-unknown}
     image: re-rtc-backend:latest
     container_name: re-rtc-backend
     restart: unless-stopped
@@ -55,7 +53,6 @@ services:
       ADMIN_PASSWORD: ${ADMIN_PASSWORD:-admin}
       ADMIN_JWT_SECRET: ${ADMIN_JWT_SECRET:-change-me-to-a-long-random-secret}
       ADMIN_TOKEN_EXPIRE_HOURS: ${ADMIN_TOKEN_EXPIRE_HOURS:-12}
-      GIT_COMMIT: ${GIT_COMMIT:-unknown}
     extra_hosts:
       - "host.docker.internal:host-gateway"
     depends_on:

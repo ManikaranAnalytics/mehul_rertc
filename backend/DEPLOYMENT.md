@@ -176,7 +176,6 @@ docker compose down
 
 | Issue | Fix |
 |-------|-----|
-| UI still shows old version after deploy | Run `bash deploy.sh` from repo root — it `git pull`s, `docker compose build --no-cache --pull`, and `--force-recreate`s. Check `curl .../api/health` for `git_commit`. Hard-refresh browser (Ctrl+Shift+R). Stop legacy `re-rtc-frontend` nginx container if still running |
 | `ModuleNotFoundError` locally | Use `../.venv/bin/uvicorn`, not system Python |
 | DB not reachable in container | Use `@postgres` (bundled) or `@host.docker.internal` (host Postgres) |
 | Persistence API returns 503 | Set `DATABASE_URL` in `.env` or compose `environment` |
