@@ -325,7 +325,7 @@ export function OptimizerProvider({ children }: { children: React.ReactNode }) {
 
   // Load uploaded generation data from PostgreSQL for analysis tabs
   const refreshGenerationEdits = useCallback(async () => {
-    const edits = await fetchAllGenerationEdits();
+    const { edits } = await fetchAllGenerationEdits();
     setMultiDayGenEdits(edits);
   }, []);
 

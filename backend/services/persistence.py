@@ -7,6 +7,7 @@ from db.models import AppState, ScheduleRun
 OPTIMIZER_CONFIG_KEY = "optimizer_config"
 MULTIDAY_ANALYSIS_KEY = "multiday_analysis"
 GENERATION_OVERRIDES_KEY = "generation_overrides"
+GENERATION_UPLOAD_META_KEY = "generation_upload_meta"
 
 
 def get_state(db: Session, key: str) -> dict[str, Any] | None:

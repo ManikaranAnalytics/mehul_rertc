@@ -16,7 +16,8 @@ from sqlalchemy.orm import Session
 
 from db.models import GenerationInput
 from services.constants import CONTRACT_END_DATE, CONTRACT_START_DATE, JULY_START_DATE
-from services.forecast import get_power_for_wind_speed
+from services.forecast import compute_scaled_solar_mw, get_power_for_wind_speed
+from services.persistence import GENERATION_UPLOAD_META_KEY, get_state, set_state
 
 BLOCK_TIMES = [
     f"{h:02d}:{m:02d}:00"
@@ -25,6 +26,55 @@ BLOCK_TIMES = [
 ]
 
 DEFAULT_SOLAR_AC_MW = 60.0
+
+
+def get_upload_meta_map(db: Session) -> dict[str, dict[str, Any]]:
+    """Per-date upload metadata: solar_ac_mw at upload time and storage mode."""
+    return dict(get_state(db, GENERATION_UPLOAD_META_KEY) or {})
+
+
+def get_date_upload_meta(db: Session, for_date: str) -> dict[str, Any] | None:
+    return get_upload_meta_map(db).get(for_date)
+
+
+def set_upload_meta_for_dates(
+    db: Session,
+    dates: list[str],
+    *,
+    solar_ac_mw: float,
+    mode: str,
+) -> None:
+    """Record how solar_mw was stored for each uploaded date (absolute MW or 175 MW reference base)."""
+    meta = get_upload_meta_map(db)
+    entry = {"solar_ac_mw": float(solar_ac_mw), "mode": mode}
+    for d in dates:
+        meta[d] = entry
+    set_state(db, GENERATION_UPLOAD_META_KEY, meta)
+
+
+def scale_stored_solar_mw(
+    stored_solar: float,
+    solar_ac_mw: float,
+    meta: dict[str, Any] | None,
+) -> float:
+    """
+    Scale stored solar to the requested Solar Net Capacity.
+
+    - reference: stored value is max(solar_2024, solar_2025) from june_data-style CSV
+    - absolute: stored value is MW at upload-time solar_ac_mw (scale proportionally)
+    """
+    if stored_solar <= 0 or solar_ac_mw <= 0:
+        return 0.0
+
+    mode = (meta or {}).get("mode", "absolute")
+    if mode == "reference":
+        return compute_scaled_solar_mw(stored_solar, solar_ac_mw)
+
+    upload_ac = float((meta or {}).get("solar_ac_mw") or DEFAULT_SOLAR_AC_MW)
+    if upload_ac <= 0:
+        upload_ac = DEFAULT_SOLAR_AC_MW
+    scaled = stored_solar * (solar_ac_mw / upload_ac)
+    return min(scaled, solar_ac_mw)
 
 
 def _apply_upload_wind_speed_correction(speed: float) -> float:
@@ -279,7 +329,12 @@ def import_reference_csv_file(
     rows = parse_generation_csv(text, solar_ac_mw=solar_ac_mw)
     if not rows:
         raise HTTPException(status_code=400, detail="No valid rows found in reference file")
-    return upsert_generation_rows(db, rows)
+    return upsert_generation_rows(
+        db,
+        rows,
+        solar_ac_mw=solar_ac_mw,
+        solar_mode="reference",
+    )
 
 
 def patch_generation_blocks(
@@ -311,10 +366,23 @@ def patch_generation_blocks(
     if not payload:
         return {"rows_upserted": 0, "dates_updated": 0}
 
-    return upsert_generation_rows(db, payload)
+    result = upsert_generation_rows(
+        db,
+        payload,
+        solar_ac_mw=solar_ac_mw,
+        solar_mode="absolute",
+    )
+    return result
 
 
-def upsert_generation_rows(db: Session, rows: list[dict[str, Any]], default_date: str | None = None) -> dict[str, int]:
+def upsert_generation_rows(
+    db: Session,
+    rows: list[dict[str, Any]],
+    default_date: str | None = None,
+    *,
+    solar_ac_mw: float | None = None,
+    solar_mode: str | None = None,
+) -> dict[str, int]:
     if not rows:
         raise HTTPException(status_code=400, detail="No valid rows found in upload")
 
@@ -351,11 +419,25 @@ def upsert_generation_rows(db: Session, rows: list[dict[str, Any]], default_date
         total += len(values)
 
     db.commit()
+
+    if solar_ac_mw is not None and solar_mode is not None:
+        set_upload_meta_for_dates(
+            db,
+            list(by_date.keys()),
+            solar_ac_mw=solar_ac_mw,
+            mode=solar_mode,
+        )
+
     return {"rows_upserted": total, "dates_updated": len(by_date)}
 
 
-def get_generation_for_date(db: Session, for_date: str) -> list[dict[str, Any]]:
+def get_generation_for_date(
+    db: Session,
+    for_date: str,
+    solar_ac_mw: float | None = None,
+) -> list[dict[str, Any]]:
     validate_contract_date(for_date)
+    meta = get_date_upload_meta(db, for_date) if solar_ac_mw is not None else None
     rows = db.scalars(
         select(GenerationInput)
         .where(GenerationInput.date == for_date)
@@ -369,12 +451,18 @@ def get_generation_for_date(db: Session, for_date: str) -> list[dict[str, Any]]:
     result: list[dict[str, Any]] = []
     for block in range(1, 97):
         row = by_block.get(block)
+        stored_solar = float(row.solar_mw) if row else 0.0
+        display_solar = (
+            scale_stored_solar_mw(stored_solar, solar_ac_mw, meta)
+            if solar_ac_mw is not None and row is not None
+            else stored_solar
+        )
         result.append({
             "date": for_date,
             "block": block,
             "time": row.time if row else BLOCK_TIMES[block - 1],
             "wind_speed": float(row.wind_speed) if row else 0.0,
-            "solar_mw": float(row.solar_mw) if row else 0.0,
+            "solar_mw": display_solar,
             "has_upload": row is not None,
         })
     return result
@@ -397,8 +485,12 @@ def build_template_csv(db: Session, from_date: str, to_date: str) -> str:
     return "\n".join(lines) + "\n"
 
 
-def block_overrides_from_db(db: Session, for_date: str, wtg_count: int) -> list[dict[str, Any]]:
-    """Build schedule block_overrides from PostgreSQL generation_inputs for a date."""
+def block_overrides_from_db(
+    db: Session,
+    for_date: str,
+    wtg_count: int,
+) -> list[dict[str, Any]]:
+    """Build schedule block_overrides from PostgreSQL generation_inputs (raw stored solar MW)."""
     rows = get_generation_for_date(db, for_date)
     if not any(r.get("has_upload") for r in rows):
         return []
@@ -439,5 +531,24 @@ def clear_july_generation_data(db: Session) -> int:
             GenerationInput.date <= CONTRACT_END_DATE,
         )
     )
+    meta = get_upload_meta_map(db)
+    for key in list(meta.keys()):
+        if key >= JULY_START_DATE:
+            del meta[key]
+    if meta:
+        set_state(db, GENERATION_UPLOAD_META_KEY, meta)
+    else:
+        from services.persistence import delete_state
+        delete_state(db, GENERATION_UPLOAD_META_KEY)
     db.commit()
     return result.rowcount or 0
+
+
+def csv_solar_storage_mode(text: str) -> str:
+    """Detect whether uploaded CSV stores solar as 175 MW reference base or absolute MW."""
+    reader = csv.reader(io.StringIO(text.strip()))
+    rows = list(reader)
+    if not rows:
+        return "absolute"
+    headers = [_normalize_header(h) for h in rows[0]]
+    return "reference" if _is_june_reference_format(headers) else "absolute"

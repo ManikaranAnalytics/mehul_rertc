@@ -134,12 +134,11 @@ export default function GenerationInputTable() {
     const load = async () => {
       setLoading(true);
       try {
-        const response = await fetchGenerationFromDb(fromDate);
+        const response = await fetchGenerationFromDb(fromDate, solarAc);
         if (cancelled) return;
         setHasUploadForDate(response.has_upload);
-        const edits = response.has_upload ? dbRowsToGenEdits(response.rows) : {};
-        setPageEdits(edits);
-        setDisplayRows(buildDisplayRows(response.rows, edits));
+        setPageEdits({});
+        setDisplayRows(buildDisplayRows(response.rows, {}));
       } catch {
         if (!cancelled) {
           setHasUploadForDate(false);
@@ -152,7 +151,7 @@ export default function GenerationInputTable() {
     };
     void load();
     return () => { cancelled = true; };
-  }, [fromDate, buildDisplayRows]);
+  }, [fromDate, solarAc, buildDisplayRows]);
 
   // Recompute wind MW when local edits or curtailment change
   useEffect(() => {
@@ -163,11 +162,10 @@ export default function GenerationInputTable() {
     setUploadMessage(null);
     try {
       const result = await uploadGenerationCsv(file, fromDate, solarAc);
-      const response = await fetchGenerationFromDb(fromDate);
+      const response = await fetchGenerationFromDb(fromDate, solarAc);
       setHasUploadForDate(response.has_upload);
-      const edits = response.has_upload ? dbRowsToGenEdits(response.rows) : {};
-      applyPageEdits(edits);
-      setDisplayRows(buildDisplayRows(response.rows, edits));
+      applyPageEdits({});
+      setDisplayRows(buildDisplayRows(response.rows, {}));
       await refreshGenerationEdits();
       setUploadMessage({
         type: 'success',

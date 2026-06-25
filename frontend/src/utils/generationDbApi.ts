@@ -17,8 +17,12 @@ export interface GenerationDbDateResponse {
   rows: GenerationDbRow[];
 }
 
-export async function fetchGenerationFromDb(date: string): Promise<GenerationDbDateResponse> {
-  const res = await fetch(`${BASE_URL}/api/generation/db/${date}`);
+export async function fetchGenerationFromDb(
+  date: string,
+  solarAcMw?: number,
+): Promise<GenerationDbDateResponse> {
+  const params = solarAcMw != null ? `?solar_ac_mw=${solarAcMw}` : '';
+  const res = await fetch(`${BASE_URL}/api/generation/db/${date}${params}`);
   if (!res.ok) throw new Error('Failed to load generation data');
   return res.json();
 }
@@ -52,10 +56,16 @@ export function downloadGenerationTemplate(fromDate: string, toDate: string): vo
   link.click();
 }
 
-export async function fetchAllGenerationEdits(): Promise<Record<string, Record<number, GenEdit>>> {
+export async function fetchAllGenerationEdits(): Promise<{
+  edits: Record<string, Record<number, GenEdit>>;
+  uploadMeta: Record<string, { solar_ac_mw: number; mode: string }>;
+}> {
   const res = await fetch(`${BASE_URL}/api/generation/db/edits`);
-  if (!res.ok) return {};
-  const body = await res.json() as { edits: Record<string, Record<string, GenEdit>> };
+  if (!res.ok) return { edits: {}, uploadMeta: {} };
+  const body = await res.json() as {
+    edits: Record<string, Record<string, GenEdit>>;
+    upload_meta?: Record<string, { solar_ac_mw: number; mode: string }>;
+  };
   const result: Record<string, Record<number, GenEdit>> = {};
   Object.entries(body.edits ?? {}).forEach(([date, blocks]) => {
     result[date] = {};
@@ -63,7 +73,7 @@ export async function fetchAllGenerationEdits(): Promise<Record<string, Record<n
       result[date][parseInt(blockStr, 10)] = edit;
     });
   });
-  return result;
+  return { edits: result, uploadMeta: body.upload_meta ?? {} };
 }
 
 export function genEditsToBlockOverrides(

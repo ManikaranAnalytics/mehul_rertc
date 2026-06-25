@@ -112,7 +112,7 @@ export default function MultiDayAnalysis() {
     const datesRun: string[] = [];
 
     try {
-      const generationEdits = await fetchAllGenerationEdits();
+      const { edits: generationEdits } = await fetchAllGenerationEdits();
       const resolvedStart = startIndex >= 0 ? startIndex : 0;
 
       for (let i = 0; i < numDays; i++) {

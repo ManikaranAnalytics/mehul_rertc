@@ -11,7 +11,8 @@ from models.schemas import (
 )
 from db.database import get_db
 from services.forecast import generate_forecast, apply_curtailment_to_dataframe, resolve_active_segments
-from services.generation_store import block_overrides_from_db
+from services.generation_store import block_overrides_from_db, get_date_upload_meta, scale_stored_solar_mw
+from services.generation_store import DEFAULT_SOLAR_AC_MW
 from services.psp_optimizer import optimize_psp_dispatch, find_max_rtc_no_shortfall, calculate_rtc_range, find_max_rtc_multiday
 
 router = APIRouter()
@@ -26,11 +27,26 @@ def health_check():
     }
 
 
+def _resolve_upload_meta(db: Session | None, for_date: str) -> dict | None:
+    """Upload metadata for scaling stored solar; legacy uploads default to absolute @ 60 MW."""
+    if db is None:
+        return None
+    meta = get_date_upload_meta(db, for_date)
+    if meta is not None:
+        return meta
+    from services.generation_store import get_generation_for_date
+    rows = get_generation_for_date(db, for_date)
+    if any(r.get("has_upload") for r in rows):
+        return {"solar_ac_mw": DEFAULT_SOLAR_AC_MW, "mode": "absolute"}
+    return None
+
+
 def _apply_overrides(
     forecast_df: pd.DataFrame,
     overrides,
     solar_ac_mw: float,
     active_segments: list,
+    upload_meta: dict | None = None,
 ) -> pd.DataFrame:
     """
     Apply per-block wind/solar overrides, then re-apply curtailment.
@@ -52,7 +68,11 @@ def _apply_overrides(
             wind_val = float(ov['wind_mw'])
             df.at[idx, 'wind_mw_raw'] = wind_val
         if 'solar_mw' in ov:
-            solar_val = min(float(ov['solar_mw']), solar_ac_mw)
+            raw_solar = float(ov['solar_mw'])
+            if upload_meta:
+                solar_val = scale_stored_solar_mw(raw_solar, solar_ac_mw, upload_meta)
+            else:
+                solar_val = min(raw_solar, solar_ac_mw)
             df.at[idx, 'solar_mw_raw'] = solar_val
     return apply_curtailment_to_dataframe(df, active_segments)
 
@@ -93,6 +113,7 @@ def _forecast_for_request(
     *,
     date: str | None = None,
     block_overrides=None,
+    upload_meta: dict | None = None,
 ):
     """Zero baseline forecast + optional block overrides (PostgreSQL-sourced generation)."""
     target_date = date or request.date
@@ -112,11 +133,12 @@ def _forecast_for_request(
         overrides,
         request.solar_ac_mw,
         active_segments,
+        upload_meta=upload_meta,
     )
 
 
 @router.post("/schedule", response_model=ScheduleResponse)
-def get_optimal_schedule(request: ScheduleRequest):
+def get_optimal_schedule(request: ScheduleRequest, db: Session = Depends(get_db)):
     """
     Accepts turbine count, solar capacity, RTC commitment, and a date.
     Calculates the 96-block generation forecast and runs the sequential PSP optimization.
@@ -132,7 +154,11 @@ def get_optimal_schedule(request: ScheduleRequest):
             curtailment_start_block=request.curtailment_start_block,
             curtailment_end_block=request.curtailment_end_block,
         )
-        forecast_df = _forecast_for_request(request, active_segments)
+        forecast_df = _forecast_for_request(
+            request,
+            active_segments,
+            upload_meta=_resolve_upload_meta(db, request.date),
+        )
 
         dispatch_results = optimize_psp_dispatch(
             forecast_df=forecast_df,
@@ -151,7 +177,7 @@ def get_optimal_schedule(request: ScheduleRequest):
 
 
 @router.post("/max-rtc", response_model=MaxRTCResponse)
-def get_max_possible_rtc(request: MaxRTCRequest):
+def get_max_possible_rtc(request: MaxRTCRequest, db: Session = Depends(get_db)):
     """
     Calculates the maximum RTC commitment where ALL 96 blocks remain compliant
     (no shortfall at any block). Returns the schedule for that commitment.
@@ -163,7 +189,11 @@ def get_max_possible_rtc(request: MaxRTCRequest):
             curtailment_start_block=request.curtailment_start_block,
             curtailment_end_block=request.curtailment_end_block,
         )
-        forecast_df = _forecast_for_request(request, active_segments)
+        forecast_df = _forecast_for_request(
+            request,
+            active_segments,
+            upload_meta=_resolve_upload_meta(db, request.date),
+        )
 
         psp = _psp_params(request)
         psp_dis_segs = _resolve_psp_discharge_segments(request)
@@ -191,7 +221,7 @@ def get_max_possible_rtc(request: MaxRTCRequest):
 
 
 @router.post("/rtc-range", response_model=RTCRangeResponse)
-def get_rtc_range(request: RTCRangeRequest):
+def get_rtc_range(request: RTCRangeRequest, db: Session = Depends(get_db)):
     """
     Returns min / Manikaran's Suggestion / max committable RTC for the given plant config.
 
@@ -208,7 +238,11 @@ def get_rtc_range(request: RTCRangeRequest):
             curtailment_start_block=request.curtailment_start_block,
             curtailment_end_block=request.curtailment_end_block,
         )
-        forecast_df = _forecast_for_request(request, active_segments)
+        forecast_df = _forecast_for_request(
+            request,
+            active_segments,
+            upload_meta=_resolve_upload_meta(db, request.date),
+        )
 
         psp = _psp_params(request)
         result = calculate_rtc_range(
@@ -249,6 +283,7 @@ def get_multi_day_max_rtc(request: MultiDayMaxRTCRequest, db: Session = Depends(
                 active_segments,
                 date=date,
                 block_overrides=block_overrides_from_db(db, date, request.wtg_count),
+                upload_meta=_resolve_upload_meta(db, date),
             )
             for date in request.dates
         ]

@@ -8,12 +8,16 @@ from services.forecast import generate_forecast
 from services.generation_store import (
     build_template_csv,
     clear_july_generation_data,
+    csv_solar_storage_mode,
     get_all_uploaded_as_edits,
+    get_date_upload_meta,
     get_generation_for_date,
     get_generation_range,
+    get_upload_meta_map,
     import_reference_csv_file,
     parse_generation_csv,
     patch_generation_blocks,
+    scale_stored_solar_mw,
     upsert_generation_rows,
     validate_contract_date,
 )
@@ -26,12 +30,40 @@ def get_raw_generation(
     date: str,
     wtg_count: int = Query(10, ge=1, le=59),
     solar_ac_mw: float = Query(50.0, ge=5.0, le=175.0),
+    db: Session = Depends(get_db),
 ):
     """
-    Returns raw, scaled wind speed, wind generation, and solar generation (pre-PSP dispatch)
-    for a given date. Unchanged for optimizer compatibility.
+    Returns raw wind/solar generation (pre-PSP dispatch) for a date.
+    Uses PostgreSQL uploads when present (scaled to solar_ac_mw); otherwise June reference forecast.
     """
     try:
+        rows = get_generation_for_date(db, date)
+        if any(r.get("has_upload") for r in rows):
+            meta = get_date_upload_meta(db, date)
+            from services.forecast import get_power_for_wind_speed
+            records = []
+            for row in rows:
+                wind_speed = float(row["wind_speed"])
+                power_kw = get_power_for_wind_speed(wind_speed)
+                wind_mw = round((power_kw / 1000.0) * wtg_count, 4)
+                if row.get("has_upload"):
+                    solar_mw = scale_stored_solar_mw(float(row["solar_mw"]), solar_ac_mw, meta)
+                else:
+                    solar_mw = 0.0
+                records.append({
+                    "block": int(row["block"]),
+                    "time": row["time"],
+                    "wind_speed": round(wind_speed, 2),
+                    "wind_mw_raw": wind_mw,
+                    "wind_mw": wind_mw,
+                    "solar_mw_raw": round(solar_mw, 4),
+                    "solar_mw": round(solar_mw, 4),
+                    "curtail_flag": False,
+                    "curtail_partial_flag": False,
+                    "curtail_max_mw": -1.0,
+                })
+            return records
+
         forecast_df = generate_forecast(
             date_str=date,
             wtg_count=wtg_count,
@@ -78,7 +110,10 @@ def download_generation_template(
 @router.get("/generation/db/edits")
 def get_generation_edits(db: Session = Depends(get_db)):
     """All uploaded generation data in multiDayGenEdits shape for optimizer sync."""
-    return {"edits": get_all_uploaded_as_edits(db)}
+    return {
+        "edits": get_all_uploaded_as_edits(db),
+        "upload_meta": get_upload_meta_map(db),
+    }
 
 
 @router.post("/generation/db/upload")
@@ -97,7 +132,14 @@ async def upload_generation_csv(
         raise HTTPException(status_code=400, detail="File must be UTF-8 encoded CSV") from exc
 
     rows = parse_generation_csv(text, solar_ac_mw=solar_ac_mw)
-    result = upsert_generation_rows(db, rows, default_date=default_date)
+    mode = csv_solar_storage_mode(text)
+    result = upsert_generation_rows(
+        db,
+        rows,
+        default_date=default_date,
+        solar_ac_mw=solar_ac_mw,
+        solar_mode=mode,
+    )
     return {"status": "ok", **result}
 
 
@@ -133,9 +175,13 @@ def patch_generation_for_date(
 
 
 @router.get("/generation/db/{date}")
-def get_generation_from_db(date: str, db: Session = Depends(get_db)):
+def get_generation_from_db(
+    date: str,
+    solar_ac_mw: float | None = Query(None, ge=5.0, le=175.0, description="Scale stored solar to this AC capacity"),
+    db: Session = Depends(get_db),
+):
     """Returns uploaded generation data for a date (zeros if not uploaded)."""
     validate_contract_date(date)
-    rows = get_generation_for_date(db, date)
+    rows = get_generation_for_date(db, date, solar_ac_mw=solar_ac_mw)
     has_upload = any(r.get("has_upload") for r in rows)
     return {"date": date, "has_upload": has_upload, "rows": rows}
