@@ -124,6 +124,7 @@ interface OptimizerContextValue {
   // Handlers
   handleRollToNextDay: () => void;
   handleClearCarry: () => void;
+  buildScheduleRequest: () => Record<string, unknown>;
 }
 
 const OptimizerContext = createContext<OptimizerContextValue | null>(null);
@@ -368,6 +369,31 @@ export function OptimizerProvider({ children }: { children: React.ReactNode }) {
     return Object.entries(merged).map(([block, v]) => ({ block: parseInt(block), ...v }));
   }, [blockOverrides, genTableEdits, multiDayGenEdits, selectedDate, wtgCount]);
 
+  const buildScheduleRequest = useCallback(() => ({
+    date: selectedDate,
+    wtg_count: wtgCount,
+    solar_ac_mw: solarAc,
+    rtc_commitment_mw: rtcCommitment,
+    curtailment_enabled: curtailmentEnabled,
+    curtailment_segments: curtailmentSegments,
+    transmission_loss_pct: transmissionLoss,
+    roundtrip_loss_pct: roundtripLoss,
+    min_compliance_ratio: 0.50,
+    max_soc_mwh: maxSocMwh,
+    max_charge_mw: maxChargeMw,
+    max_discharge_mw: maxDischargeMw,
+    min_dispatch_mw: minDispatchMw,
+    block_overrides: buildOverridesList(),
+    initial_soc_mwh: initialSocMwh,
+    prev_day_charge_schedule: prevDayChargeSchedule,
+    psp_discharge_segments: pspDischargeSegments.length > 0 ? pspDischargeSegments : null,
+    discharge_target: dischargeTarget,
+  }), [
+    selectedDate, wtgCount, solarAc, rtcCommitment, curtailmentEnabled, curtailmentSegments,
+    transmissionLoss, roundtripLoss, maxSocMwh, maxChargeMw, maxDischargeMw, minDispatchMw,
+    buildOverridesList, initialSocMwh, prevDayChargeSchedule, pspDischargeSegments, dischargeTarget,
+  ]);
+
   // ── Fetch schedule on state change ──
   useEffect(() => {
     const fetchSchedule = async () => {
@@ -377,26 +403,7 @@ export function OptimizerProvider({ children }: { children: React.ReactNode }) {
         const response = await fetch(`${BASE_URL}/api/schedule`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            date: selectedDate,
-            wtg_count: wtgCount,
-            solar_ac_mw: solarAc,
-            rtc_commitment_mw: rtcCommitment,
-            curtailment_enabled: curtailmentEnabled,
-            curtailment_segments: curtailmentSegments,
-            transmission_loss_pct: transmissionLoss,
-            roundtrip_loss_pct: roundtripLoss,
-            min_compliance_ratio: 0.50,
-            max_soc_mwh: maxSocMwh,
-            max_charge_mw: maxChargeMw,
-            max_discharge_mw: maxDischargeMw,
-            min_dispatch_mw: minDispatchMw,
-            block_overrides: buildOverridesList(),
-            initial_soc_mwh: initialSocMwh,
-            prev_day_charge_schedule: prevDayChargeSchedule,
-            psp_discharge_segments: pspDischargeSegments.length > 0 ? pspDischargeSegments : null,
-            discharge_target: dischargeTarget,
-          })
+          body: JSON.stringify(buildScheduleRequest()),
         });
         if (!response.ok) {
           let detail = response.statusText;
@@ -433,7 +440,7 @@ export function OptimizerProvider({ children }: { children: React.ReactNode }) {
 
     const handler = setTimeout(() => { fetchSchedule(); }, 150);
     return () => clearTimeout(handler);
-  }, [selectedDate, wtgCount, solarAc, rtcCommitment, curtailmentEnabled, curtailmentSegments, transmissionLoss, roundtripLoss, maxSocMwh, maxChargeMw, maxDischargeMw, minDispatchMw, initialSocMwh, prevDayChargeSchedule, pspDischargeSegments, dischargeTarget, buildOverridesList]);
+  }, [buildScheduleRequest]);
 
   // ── Roll to next day ──
   const handleRollToNextDay = useCallback(() => {
@@ -569,6 +576,7 @@ export function OptimizerProvider({ children }: { children: React.ReactNode }) {
     refreshGenerationEdits,
     blocks, summary,
     handleRollToNextDay, handleClearCarry,
+    buildScheduleRequest,
   };
 
   return (

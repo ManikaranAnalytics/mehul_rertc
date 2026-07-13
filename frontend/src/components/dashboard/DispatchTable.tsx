@@ -3,39 +3,35 @@ import { Download } from 'lucide-react';
 import { useOptimizer } from '../../context/OptimizerContext';
 import { BASE_URL } from '../../utils/constants';
 
+function curtailmentBadgeLabel(
+  enabled: boolean,
+  segments: { startBlock: number; endBlock: number }[],
+): string | null {
+  if (!enabled || segments.length === 0) return null;
+  return segments.map(s => `B${s.startBlock}–${s.endBlock}`).join(', ');
+}
+
 export default function DispatchTable() {
   const {
     blocks, rtcCommitment, scheduleData, summary,
     selectedDate, wtgCount, solarAc,
-    curtailmentEnabled, curtailmentStart, curtailmentEnd,
-    roundtripLoss, transmissionLoss, maxSocMwh, maxChargeMw, maxDischargeMw, minDispatchMw,
-    dischargeTarget,
+    curtailmentEnabled, curtailmentSegments,
+    buildScheduleRequest,
   } = useOptimizer();
 
   const [excelLoading, setExcelLoading] = useState(false);
   const tableRef = useRef<HTMLDivElement>(null);
 
+  const curtailLabel = curtailmentBadgeLabel(curtailmentEnabled, curtailmentSegments);
+
   const handleExcelDownload = async () => {
     setExcelLoading(true);
     try {
-      const params = new URLSearchParams({
-        date: selectedDate,
-        wtg_count: String(wtgCount),
-        solar_ac_mw: String(solarAc),
-        rtc_commitment_mw: String(rtcCommitment),
-        curtailment_enabled: String(curtailmentEnabled),
-        curtailment_start_block: String(curtailmentStart),
-        curtailment_end_block: String(curtailmentEnd),
-        transmission_loss_pct: String(transmissionLoss),
-        roundtrip_loss_pct: String(roundtripLoss),
-        min_compliance_ratio: '0.50',
-        max_soc_mwh: String(maxSocMwh),
-        max_charge_mw: String(maxChargeMw),
-        max_discharge_mw: String(maxDischargeMw),
-        min_dispatch_mw: String(minDispatchMw),
-        discharge_target: dischargeTarget,
+      const response = await fetch(`${BASE_URL}/api/export/excel`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(buildScheduleRequest()),
       });
-      const response = await fetch(`${BASE_URL}/api/export/excel?${params.toString()}`);
       if (!response.ok) throw new Error('Export failed');
       const blob = await response.blob();
       const url = URL.createObjectURL(blob);
@@ -59,7 +55,9 @@ export default function DispatchTable() {
       <div className="table-header-wrapper">
         <h2 className="table-title">Interval-Wise Energy Accounts (15-min)</h2>
         <div style={{ display: 'flex', alignItems: 'center', gap: '12px', fontSize: '12px', flexWrap: 'wrap' }}>
-          <span className="cell-badge curtail">Wind + Solar Curtailment Active (B37–64)</span>
+          {curtailLabel && (
+            <span className="cell-badge curtail">Wind + Solar Curtailment Active ({curtailLabel})</span>
+          )}
           <span className="cell-badge warn" style={{ background: 'rgba(220, 38, 38, 0.1)', color: '#ef4444' }}>Compliance Shortfall</span>
           {(summary?.charge_window_expired_mwh ?? 0) > 0 && (
             <span className="cell-badge warn" style={{ background: 'rgba(239,68,68,0.1)', color: '#f87171' }}>

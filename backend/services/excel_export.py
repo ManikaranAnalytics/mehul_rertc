@@ -41,8 +41,12 @@ def build_excel(forecast_df, block_results, summary, rtc_range,
                 initial_soc_mwh=0.0,
                 curtailment_enabled=True,
                 curtailment_start_block=37, curtailment_end_block=64,
+                curtailment_label="",
+                psp_curtailment_label="None",
                 roundtrip_loss_pct=20.0, min_compliance_ratio=0.50,
-                max_soc_mwh=360.0, min_dispatch_mw=6.0) -> bytes:
+                max_soc_mwh=360.0, max_charge_mw=60.0, max_discharge_mw=50.0,
+                min_dispatch_mw=6.0, transmission_loss_pct=0.0,
+                discharge_target="rtc_commitment") -> bytes:
     wb = Workbook()
     ws_cfg  = wb.active;  ws_cfg.title = "Config"
     ws_raw  = wb.create_sheet("Raw Data")
@@ -50,12 +54,13 @@ def build_excel(forecast_df, block_results, summary, rtc_range,
     ws_sum  = wb.create_sheet("Summary")
     _cfg(ws_cfg, date_str, wtg_count, solar_ac_mw, rtc_commitment, rtc_range,
          curtailment_enabled, curtailment_start_block, curtailment_end_block,
+         curtailment_label, psp_curtailment_label,
          roundtrip_loss_pct, min_compliance_ratio, initial_soc_mwh,
-         max_soc_mwh, min_dispatch_mw)
+         max_soc_mwh, max_charge_mw, max_discharge_mw, min_dispatch_mw,
+         transmission_loss_pct, discharge_target)
     _raw(ws_raw, forecast_df, wtg_count, solar_ac_mw)
-    _disp(ws_disp, curtailment_start_block, curtailment_end_block,
-          curtailment_enabled, max_soc_mwh)
-    _summ(ws_sum, max_soc_mwh)
+    _disp(ws_disp, block_results, rtc_commitment)
+    _summ(ws_sum, summary, block_results, rtc_commitment, max_soc_mwh)
     buf = io.BytesIO()
     wb.save(buf); buf.seek(0)
     return buf.read()
@@ -63,8 +68,11 @@ def build_excel(forecast_df, block_results, summary, rtc_range,
 
 def _cfg(ws, date_str, wtg_count, solar_ac_mw, rtc, rtc_range,
          curtailment_enabled, curtailment_start_block, curtailment_end_block,
+         curtailment_label, psp_curtailment_label,
          roundtrip_loss_pct, min_compliance_ratio, initial_soc_mwh=0.0,
-         max_soc_mwh=360.0, min_dispatch_mw=6.0):
+         max_soc_mwh=360.0, max_charge_mw=60.0, max_discharge_mw=50.0,
+         min_dispatch_mw=6.0, transmission_loss_pct=0.0,
+         discharge_target="rtc_commitment"):
     ws.sheet_view.showGridLines = False
     ws.column_dimensions["A"].width = 38
     ws.column_dimensions["B"].width = 22
@@ -110,27 +118,29 @@ def _cfg(ws, date_str, wtg_count, solar_ac_mw, rtc, rtc_range,
 
     sec(13,"  ▸  PSP STORAGE & DISPATCH CONSTANTS")
     row(14, "PSP Location",              "Orvakallu PSP, Andhra Pradesh")
-    row(15, "Max Storage (MWh)",         360,"Hard ceiling (fixed)")
-    row(16, "Max Charge Rate (MW)",      60, "Max draw from grid (fixed)")
-    row(17, "Max Discharge Rate (MW)",   50, "Max injection to grid (fixed)")
+    row(15, "Max Storage (MWh)",         max_soc_mwh,"PSP storage ceiling",fmt="0.0")
+    row(16, "Max Charge Rate (MW)",      max_charge_mw, "Max draw from grid",fmt="0.0")
+    row(17, "Max Discharge Rate (MW)",   max_discharge_mw, "Max injection to grid",fmt="0.0")
     row(18, "Round-Trip Loss (%)",       roundtrip_loss_pct,
         "Total energy loss charging + discharging",fmt="0.0")
     row(19, "Min Compliance Ratio",      min_compliance_ratio,
         f"{int(min_compliance_ratio*100)}% of RTC is the regulatory floor",fmt="0.00")
-    row(20, "Curtailment Start Block",   curtailment_start_block if curtailment_enabled else "DISABLED",
-        "First block where Wind+Solar are zeroed")
-    row(21, "Curtailment End Block",     curtailment_end_block if curtailment_enabled else "DISABLED",
-        "Last block where Wind+Solar are zeroed")
+    curt_display = curtailment_label or (
+        f"B{curtailment_start_block}–{curtailment_end_block}" if curtailment_enabled else "DISABLED"
+    )
+    row(20, "Wind+Solar Curtailment",    curt_display,
+        "Blocks where wind/solar generation is zeroed")
+    row(21, "PSP Discharge Curtailment", psp_curtailment_label,
+        "Per-block PSP discharge caps (0 = external supply)")
     row(22, "Min Dispatch MW (CERC)",    min_dispatch_mw,
         "CERC rule: PSP must dispatch 0 or ≥ this value; sub-threshold bumped up",fmt="0.0")
-    row(23, "Max Storage (MWh)",         max_soc_mwh,
-        "PSP storage ceiling (configurable, hard max 360 MWh)",fmt="0.0")
-    row(24, "Max Daily Cycles",          2.0,"CERC regulatory limit")
+    row(23, "Transmission Loss (%)",     transmission_loss_pct, fmt="0.0")
+    row(24, "Discharge Target Mode",     discharge_target)
 
     sec(26,"  ▸  CARRY-FORWARD FROM PREVIOUS DAY")
-    row(27, "Initial SoC (MWh)  ✎",     initial_soc_mwh,
-        "← EOD SoC from previous day — sets Block 1 SoC Start in Dispatch Schedule",
-        edit=True, fg="A78BFA", fmt="0.0")
+    row(27, "Initial SoC (MWh)",        initial_soc_mwh,
+        "EOD SoC from previous day — sets Block 1 SoC Start in Dispatch Schedule",
+        fmt="0.0")
 
     if rtc_range and "min_rtc_mw" in rtc_range:
         sec(29,"  ▸  MANIKARAN'S SUGGESTION  (dispatch-validated commitment analysis)")
@@ -149,10 +159,10 @@ def _cfg(ws, date_str, wtg_count, solar_ac_mw, rtc, rtc_range,
     sec(38,"  ▸  HOW TO USE THIS WORKBOOK")
     ws.merge_cells("A39:C42")
     c=ws.cell(39,1)
-    c.value=("1. Edit green/purple-bordered cells: RTC Commitment, WTG Count, Solar AC MW, Initial SoC.\n"
-             "2. Go to 'Dispatch Schedule' — all 96 blocks recalculate automatically.\n"
-             "3. Go to 'Summary' — all daily KPIs update from Dispatch Schedule.\n"
-             "4. Do NOT edit 'Raw Data' — it holds meteorological data used by formulas.")
+    c.value=("1. Config sheet records the inputs used for this export.\n"
+             "2. Dispatch Schedule shows the optimized 96-block result (matches the app).\n"
+             "3. Summary aggregates daily KPIs from the dispatch run.\n"
+             "4. Raw Data holds meteorological / uploaded generation source data.")
     _s(c,bg="0A1830",fg="94A3B8",i=True,s=10,a="left")
     c.alignment=Alignment(horizontal="left",vertical="top",wrap_text=True)
     ws.row_dimensions[39].height=70
@@ -201,17 +211,17 @@ def _raw(ws, forecast_df, wtg_count, solar_ac_mw):
            clr="F59E0B" if is_c else NET,a="center")
 
 
-def _disp(ws, curtailment_start_block=37, curtailment_end_block=64,
-          curtailment_enabled=True, max_soc_mwh=360.0):
+def _disp(ws, block_results, rtc_commitment):
+    """Write actual optimized dispatch values (matches on-screen schedule)."""
     ws.sheet_view.showGridLines = False
     ws.freeze_panes = "A3"
 
     COLS=[("A","Block",6,"94A3B8"),("B","Time",9,"94A3B8"),
           ("C","Curtailed?",11,"64748B"),
-          ("D","Wind MW\n(live formula)",12,WIND),
-          ("E","Solar MW\n(live formula)",13,SOLAR),
+          ("D","Wind MW",12,WIND),
+          ("E","Solar MW",13,SOLAR),
           ("F","Combined\nGen MW",12,"22D3EE"),
-          ("G","Min Floor\nMW (50%)",11,WARN),
+          ("G","Min Floor\nMW",11,WARN),
           ("H","SoC Start\nMWh",11,"6366F1"),
           ("I","PSP\nDischarge MW",13,PSPD),
           ("J","PSP\nCharge MW",12,PSPC),
@@ -222,8 +232,7 @@ def _disp(ws, curtailment_start_block=37, curtailment_end_block=64,
           ("O","Compliant?",10,"334155")]
 
     ws.merge_cells("A1:O1"); c=ws["A1"]
-    c.value=("Dispatch Schedule — 96 Time Blocks  |  All columns are live Excel formulas"
-             "  |  Change Config sheet inputs to recalculate")
+    c.value="Dispatch Schedule — 96 Time Blocks  |  Optimized result (matches app)"
     _s(c,bg=DARK,fg="A5B4FC",b=True,s=12,a="center")
     ws.row_dimensions[1].height=24
 
@@ -233,105 +242,62 @@ def _disp(ws, curtailment_start_block=37, curtailment_end_block=64,
         _s(c,bg=HDR,fg=clr,b=True,s=9,a="center")
     ws.row_dimensions[2].height=32
 
-    # Build curtailment check formula using Config sheet values
-    if curtailment_enabled:
-        curt_check = f"AND(A{{r}}>={curtailment_start_block},A{{r}}<={curtailment_end_block})"
-    else:
-        curt_check = "FALSE"
-
-    for i in range(96):
-        r=i+3; pr=r-1
-        is_c = curtailment_enabled and (curtailment_start_block <= i+1 <= curtailment_end_block)
+    for i, b in enumerate(block_results):
+        r=i+3
+        is_c = bool(b.get("curtail_flag", False))
         bg=CURT if is_c else ("111827" if i%2==0 else DARK)
 
         def fc(col,val,fmt=None,fg="CBD5E1",a="right",bold=False):
             c=ws[f"{col}{r}"]; c.value=val
             _s(c,bg=bg,fg=fg,s=9,a=a,f=fmt,b=bold)
 
-        cf = curt_check.format(r=r)
-        fc("A",f"={RAW}!A{r}",                a="center",fg="94A3B8")
-        fc("B",f"={RAW}!B{r}",                a="center",fg="94A3B8")
-        fc("C",f'=IF({cf},"YES","NO")',
-           fg="F59E0B" if is_c else NET,a="center",bold=True)
-        fc("D",f'=IF(C{r}="YES",0,{RAW}!C{r}/1000*{WTG})',
-           fmt="0.00",fg=WIND)
-        fc("E",f'=IF(C{r}="YES",0,{RAW}!D{r}*{SOL})',
-           fmt="0.00",fg=SOLAR)
-        fc("F",f"=D{r}+E{r}",                 fmt="0.00",fg="22D3EE",bold=True)
-        # Min floor = COMP ratio * RTC
-        fc("G",f"={RTC}*{COMP}",              fmt="0.00",fg=WARN)
-        # Block 1: SoC start = Initial SoC from Config (carry-forward from previous day)
-        # All other blocks: SoC start = SoC end of previous block
-        soc_s = f"={ISOC}" if r == 3 else f"K{pr}"
-        fc("H",f"={soc_s}",                   fmt="0.0", fg="818CF8")
-        # available SOC for discharge (MW): 1 MWh SoC → 4 MW for 15 min
-        avail = f"H{r}/0.25"
-        # raw discharge before CERC bump
-        raw_d = f"MIN(G{r}-F{r},50,{avail})"
-        # CERC Option A: bump sub-threshold discharge to MinDispatchMW
-        bump_d = (f"IF(AND({raw_d}>0,{raw_d}<{MDSP}),"
-                  f"MIN({MDSP},50,{avail}),{raw_d})")
-        fc("I",f"=IF(F{r}<G{r},{bump_d},0)",
-           fmt="0.00",fg=PSPD)
-        fc("J",(f"=IF(F{r}>{RTC},"
-                f"MIN(F{r}-{RTC},60,"
-                f"({MAXS}-H{r})/(0.25*(1-{LOSS}/100))),0)"),
-           fmt="0.00",fg=PSPC)
-        fc("K",f"=MIN({MAXS},MAX(0,H{r}-I{r}*0.25)+J{r}*0.25*(1-{LOSS}/100))",
-           fmt="0.0", fg="818CF8")
-        fc("L",f"=F{r}+I{r}-J{r}",            fmt="0.00",fg=NET,bold=True)
-        fc("M",f"={RTC}",                      fmt="0.00",fg=WARN)
-        fc("N",f"=MAX(0,F{r}-{RTC}-J{r})",    fmt="0.00",fg="6B7280")
-        fc("O",f'=IF(L{r}>={RTC}*{COMP}-0.0001,"✓ YES","✗ NO")',
-           fg=NET,a="center",bold=True)
+        fc("A", int(b["block"]), a="center", fg="94A3B8")
+        fc("B", str(b.get("time", ""))[:5], a="center", fg="94A3B8")
+        fc("C", "YES" if is_c else "NO", fg="F59E0B" if is_c else NET, a="center", bold=True)
+        fc("D", float(b.get("wind_mw", 0)), fmt="0.00", fg=WIND)
+        fc("E", float(b.get("solar_mw", 0)), fmt="0.00", fg=SOLAR)
+        fc("F", float(b.get("generation_mw", 0)), fmt="0.00", fg="22D3EE", bold=True)
+        fc("G", float(b.get("min_schedule", 0)), fmt="0.00", fg=WARN)
+        fc("H", float(b.get("soc_start", 0)), fmt="0.0", fg="818CF8")
+        fc("I", float(b.get("psp_discharge", 0)), fmt="0.00", fg=PSPD)
+        fc("J", float(b.get("psp_charge", 0)), fmt="0.00", fg=PSPC)
+        fc("K", float(b.get("soc_end", 0)), fmt="0.0", fg="818CF8")
+        fc("L", float(b.get("net_schedule", 0)), fmt="0.00", fg=NET, bold=True)
+        fc("M", rtc_commitment, fmt="0.00", fg=WARN)
+        fc("N", float(b.get("rtm_surplus", 0)), fmt="0.00", fg="6B7280")
+        compliant = bool(b.get("compliant", False))
+        fc("O", "✓ YES" if compliant else "✗ NO", fg=NET, a="center", bold=True)
 
     # Totals row 99
     ws.merge_cells("A99:B99"); c=ws.cell(99,1,"TOTALS / AVERAGES")
     _s(c,bg=HDR,fg="A5B4FC",b=True,s=9,a="center")
-    for col,formula,fmt in [
-        ("D","=AVERAGE(D3:D98)","0.00"),
-        ("E","=AVERAGE(E3:E98)","0.00"),
-        ("F","=AVERAGE(F3:F98)","0.00"),
-        ("I","=SUM(I3:I98)*0.25","0.00"),
-        ("J","=SUM(J3:J98)*0.25","0.00"),
-        ("K","=K98","0.0"),
-        ("L","=AVERAGE(L3:L98)","0.00"),
-        ("N","=SUM(N3:N98)*0.25","0.00"),
-        ("O",'=COUNTIF(O3:O98,"✓ YES")&" / 96"',None),
-    ]:
-        c=ws[f"{col}99"]; c.value=formula
+    totals = {
+        "D": round(sum(float(b.get("wind_mw", 0)) for b in block_results) / 96, 2),
+        "E": round(sum(float(b.get("solar_mw", 0)) for b in block_results) / 96, 2),
+        "F": round(sum(float(b.get("generation_mw", 0)) for b in block_results) / 96, 2),
+        "I": round(sum(float(b.get("psp_discharge", 0)) for b in block_results) * 0.25, 2),
+        "J": round(sum(float(b.get("psp_charge", 0)) for b in block_results) * 0.25, 2),
+        "K": round(float(block_results[-1].get("soc_end", 0)) if block_results else 0, 1),
+        "L": round(sum(float(b.get("net_schedule", 0)) for b in block_results) / 96, 2),
+        "N": round(sum(float(b.get("rtm_surplus", 0)) for b in block_results) * 0.25, 2),
+        "O": f"{sum(1 for b in block_results if b.get('compliant'))} / 96",
+    }
+    for col, val in totals.items():
+        c=ws[f"{col}99"]; c.value=val
+        fmt = "0.00" if col != "K" and col != "O" else ("0.0" if col == "K" else None)
         _s(c,bg=HDR,fg="F8FAFC",b=True,s=9,a="right",f=fmt)
     ws.row_dimensions[99].height=18
 
-    notes=[
-        "FORMULA NOTES — how each column is calculated:",
-        "D (Wind MW):      =IF(Curtailed,0, RawData.PerWTG_kW/1000 × Config.WTG_Count)",
-        "E (Solar MW):     =IF(Curtailed,0, RawData.SolarFrac × Config.Solar_AC_MW)",
-        "F (Combined Gen): =Wind_MW + Solar_MW",
-        "G (Min Floor):    =Config.RTC × Config.MinComplianceRatio  (regulatory threshold)",
-        "H (SoC Start):    =Config.InitialSoC for Block 1, then =SoC_End of previous block",
-        "I (PSP Disch.):   CERC Option A — if Gen<Floor: raw=MIN(shortfall,50MW,avail_SOC);",
-        "                  if 0<raw<MinDispatchMW → bump to MIN(MinDispatchMW,50MW,avail_SOC)",
-        "J (PSP Charge):   =IF(Gen>RTC, MIN(Gen-RTC, 60MW, space_in_tank), 0)",
-        "K (SoC End):      =MIN(MaxSoC, SoC_after_discharge + Charge_added)",
-        "L (Net Schedule): =Gen_MW + PSP_Discharge - PSP_Charge",
-        "N (RTM Surplus):  =MAX(0, Gen_MW - RTC_Target - PSP_Charge)",
-        "O (Compliant?):   =IF(Net_Schedule >= RTC*MinComplianceRatio, YES, NO)",
-    ]
-    for j,note in enumerate(notes):
-        c=ws.cell(101+j,1,note)
-        _s(c,bg=DARK,fg="A5B4FC" if j==0 else "64748B",b=(j==0),i=(j>0),s=9,a="left")
-    ws.merge_cells(f"A101:O{101+len(notes)-1}")
 
-
-def _summ(ws, max_soc_mwh=360.0):
+def _summ(ws, summary, block_results, rtc_commitment, max_soc_mwh=360.0):
+    """Write daily KPIs from the optimization summary dict."""
     ws.sheet_view.showGridLines = False
     ws.column_dimensions["A"].width=36
     ws.column_dimensions["B"].width=24
     ws.column_dimensions["C"].width=36
 
     ws.merge_cells("A1:C1"); c=ws["A1"]
-    c.value="Daily Dispatch Summary — All values auto-calculated from Dispatch Schedule"
+    c.value="Daily Dispatch Summary — from optimized schedule (matches app)"
     _s(c,bg=DARK,fg="A5B4FC",b=True,s=13,a="center")
     ws.row_dimensions[1].height=28
 
@@ -340,51 +306,64 @@ def _summ(ws, max_soc_mwh=360.0):
         _s(c,bg="1A2744",fg="818CF8",b=True,s=10,a="left")
         ws.row_dimensions[r].height=18
 
-    def row(r,label,formula,note="",fg="F8FAFC",fmt=None):
+    def row(r,label,val,note="",fg="F8FAFC",fmt=None):
         a=ws.cell(r,1,label); _s(a,bg=HDR,fg="94A3B8",b=True,s=10,a="left")
-        b=ws.cell(r,2,formula); _s(b,bg=DARK,fg=fg,b=True,s=11,a="right",f=fmt)
+        b=ws.cell(r,2,val); _s(b,bg=DARK,fg=fg,b=True,s=11,a="right",f=fmt)
         if note:
             nc=ws.cell(r,3,note); _s(nc,bg=DARK,fg="64748B",i=True,s=9,a="left")
         ws.row_dimensions[r].height=20
 
-    sec(3,"  ▸  CONFIGURATION (from Config sheet)")
-    row(4, "RTC Commitment (MW)",         f"={RTC}",         fmt="0.00",fg="34D399")
-    row(5, "Min Compliance Floor (MW)",   f"={RTC}*{COMP}",  fmt="0.00")
-    row(6, "Min Compliance Ratio",        f"={COMP}",        fmt="0.0%")
-    row(7, "WTG Count",                   f"={WTG}",         fmt="0")
-    row(8, "Solar AC Capacity (MW)",      f"={SOL}",         fmt="0.0",fg=SOLAR)
-    row(9, "Round-Trip Loss (%)",         f"={LOSS}",        fmt="0.0")
+    s = summary or {}
+    total_wind = round(sum(float(b.get("wind_mw", 0)) for b in block_results) * 0.25, 2)
+    total_solar = round(sum(float(b.get("solar_mw", 0)) for b in block_results) * 0.25, 2)
+    total_gen = round(sum(float(b.get("generation_mw", 0)) for b in block_results) * 0.25, 2)
+    avg_gen = round(sum(float(b.get("generation_mw", 0)) for b in block_results) / 96, 2) if block_results else 0
+
+    sec(3,"  ▸  CONFIGURATION")
+    row(4, "RTC Commitment (MW)",         rtc_commitment, fmt="0.00", fg="34D399")
+    row(5, "Min Compliance Floor (MW)",   s.get("min_schedule_mw", rtc_commitment * 0.5), fmt="0.00")
+    row(6, "Min Compliance Ratio",        s.get("min_compliance_ratio", 0.5), fmt="0.0%")
+    row(7, "Discharge Target Mode",       s.get("discharge_target", "rtc_commitment"))
 
     sec(11,"  ▸  GENERATION TOTALS")
-    row(12,"Total Wind Generation (MWh)", f"=SUM({DS}!D3:D98)*0.25",fmt="0.00",fg=WIND)
-    row(13,"Total Solar Generation (MWh)",f"=SUM({DS}!E3:E98)*0.25",fmt="0.00",fg=SOLAR)
-    row(14,"Total Combined Gen (MWh)",    f"=SUM({DS}!F3:F98)*0.25",fmt="0.00",fg="22D3EE")
-    row(15,"Avg Gen per Block (MW)",      f"=AVERAGE({DS}!F3:F98)", fmt="0.00")
+    row(12,"Total Wind Generation (MWh)", total_wind, fmt="0.00", fg=WIND)
+    row(13,"Total Solar Generation (MWh)",total_solar, fmt="0.00", fg=SOLAR)
+    row(14,"Total Combined Gen (MWh)",    total_gen, fmt="0.00", fg="22D3EE")
+    row(15,"Avg Gen per Block (MW)",      avg_gen, fmt="0.00")
 
     sec(17,"  ▸  PSP STORAGE DISPATCH")
-    row(18,"Total PSP Discharged (MWh)",  f"=SUM({DS}!I3:I98)*0.25",fmt="0.00",fg=PSPD)
-    row(19,"Total PSP Charged (MWh)",     f"=SUM({DS}!J3:J98)*0.25",fmt="0.00",fg=PSPC)
-    row(20,"PSP Usable Energy (MWh)",     f"=SUM({DS}!J3:J98)*0.25*(1-{LOSS}/100)",
-        "Actual recoverable energy after round-trip losses",fmt="0.00",fg=PSPC)
-    row(21,"PSP Cycles Used",             f"=SUM({DS}!J3:J98)*0.25/360",fmt="0.00")
-    row(22,"End-of-Day SoC (MWh)",        f"={DS}!K98",              fmt="0.0",fg="818CF8")
-    row(23,"End-of-Day SoC (%)",          f"={DS}!K98/{MAXS}",       fmt="0.0%",fg="818CF8")
+    row(18,"Total PSP Discharged (MWh)",  s.get("total_discharged_mwh", 0), fmt="0.00", fg=PSPD)
+    row(19,"Total PSP Charged (MWh)",     s.get("total_charged_mwh", 0), fmt="0.00", fg=PSPC)
+    row(20,"PSP Usable Energy (MWh)",     s.get("psp_usable_charged_mwh", 0),
+        "Actual recoverable energy after round-trip losses", fmt="0.00", fg=PSPC)
+    row(21,"PSP Cycles Used",             s.get("cycles_used", 0), fmt="0.00")
+    row(22,"End-of-Day SoC (MWh)",        s.get("end_soc_mwh", 0), fmt="0.0", fg="818CF8")
+    end_soc = float(s.get("end_soc_mwh", 0) or 0)
+    row(23,"End-of-Day SoC (%)",          end_soc / max_soc_mwh if max_soc_mwh else 0, fmt="0.0%", fg="818CF8")
 
     sec(25,"  ▸  COMPLIANCE & DELIVERY")
-    row(26,"Compliant Blocks",            f'=COUNTIF({DS}!O3:O98,"✓ YES")&" / 96"',fg=NET)
-    row(27,"Compliance Rate (%)",         f'=COUNTIF({DS}!O3:O98,"✓ YES")/96',fmt="0.0%",fg=NET)
-    row(28,"Total Net Schedule (MWh)",    f"=SUM({DS}!L3:L98)*0.25",fmt="0.00",fg=NET)
-    row(29,"Total RTM Surplus (MWh)",     f"=SUM({DS}!N3:N98)*0.25",fmt="0.00",fg="6B7280",
+    compliant = int(s.get("compliant_blocks", 0))
+    row(26,"Compliant Blocks",            f"{compliant} / 96", fg=NET)
+    row(27,"Compliance Rate (%)",         compliant / 96 if block_results else 0, fmt="0.0%", fg=NET)
+    row(28,"Total Net Schedule (MWh)",  s.get("total_net_delivered_mwh", 0), fmt="0.00", fg=NET)
+    row(29,"Total RTM Surplus (MWh)",   s.get("total_rtm_surplus_mwh", 0), fmt="0.00", fg="6B7280",
         note="Exportable generation above RTC target")
-    row(30,"Fully Compliant Day?",
-        f'=IF(COUNTIF({DS}!O3:O98,"✓ YES")=96,"✓  YES — 100% blocks met","✗  NO — shortfall blocks exist")',
+    row(30,"Shortfall Energy (MWh)",      s.get("shortfall_energy_mwh", 0), fmt="0.00", fg=WARN)
+    row(31,"Fully Compliant Day?",
+        "✓  YES — 100% blocks met" if s.get("fully_compliant") else "✗  NO — shortfall blocks exist",
         fg=NET)
 
-    sec(32,"  ▸  CARRY-FORWARD (PSP SoC Roll)")
-    row(33,"Initial SoC (MWh)",           f"={ISOC}",
-        "EOD SoC from previous day — carry budget into today",fmt="0.0",fg="A78BFA")
-    row(34,"Carry Budget Discharged (MWh)",
-        f"=MAX(0,{ISOC}-{DS}!K3+{DS}!I3*0.25*(1/(1-{LOSS}/100)))",
-        "Carry energy consumed in Block 1 (approx)",fmt="0.0",fg="A78BFA")
-    row(35,"End-of-Day SoC → next day carry",f"={DS}!K98",
-        "Pass this value as Initial SoC for next day's simulation",fmt="0.0",fg="A78BFA")
+    sec(33,"  ▸  CARRY-FORWARD (PSP SoC Roll)")
+    row(34,"Initial SoC (MWh)",           s.get("initial_soc_mwh", 0),
+        "EOD SoC from previous day", fmt="0.0", fg="A78BFA")
+    row(35,"Carry Forward Discharged (MWh)", s.get("carry_forward_discharged_mwh", 0),
+        "Carry energy consumed today", fmt="0.0", fg="A78BFA")
+    row(36,"End-of-Day SoC → next day carry", s.get("end_soc_mwh", 0),
+        "Pass this value as Initial SoC for next day's simulation", fmt="0.0", fg="A78BFA")
+
+    if s.get("charge_window_expired_mwh", 0):
+        sec(38,"  ▸  24h CHARGE WINDOW")
+        row(39,"Window Charged (MWh)",      s.get("charge_window_charged_mwh", 0), fmt="0.00")
+        row(40,"Window Discharged (MWh)",   s.get("charge_window_discharged_mwh", 0), fmt="0.00")
+        row(41,"Window Expired (MWh)",      s.get("charge_window_expired_mwh", 0), fmt="0.00", fg=WARN)
+        row(42,"Window Outstanding (MWh)", s.get("charge_window_outstanding_mwh", 0), fmt="0.00")

@@ -107,6 +107,38 @@ def _resolve_psp_discharge_segments(request) -> list | None:
     return [s.model_dump() if hasattr(s, 'model_dump') else dict(s) for s in segs]
 
 
+def run_dispatch_pipeline(request: ScheduleRequest, db: Session):
+    """Shared forecast + PSP dispatch + RTC range (schedule screen & Excel export)."""
+    active_segments = resolve_active_segments(
+        curtailment_enabled=request.curtailment_enabled,
+        curtailment_segments=_resolve_segments(request),
+        curtailment_start_block=request.curtailment_start_block,
+        curtailment_end_block=request.curtailment_end_block,
+    )
+    forecast_df = _forecast_for_request(
+        request,
+        active_segments,
+        upload_meta=_resolve_upload_meta(db, request.date),
+    )
+    dispatch_results = optimize_psp_dispatch(
+        forecast_df=forecast_df,
+        rtc_commitment=request.rtc_commitment_mw,
+        initial_soc=request.initial_soc_mwh,
+        prev_day_charge_schedule=request.prev_day_charge_schedule,
+        prev_charge_lots=request.prev_charge_lots,
+        global_block_offset=request.global_block_offset,
+        psp_discharge_segments=_resolve_psp_discharge_segments(request),
+        **_psp_params(request),
+    )
+    rtc_range = calculate_rtc_range(
+        forecast_df=forecast_df,
+        initial_soc=request.initial_soc_mwh,
+        psp_discharge_segments=_resolve_psp_discharge_segments(request),
+        **_psp_params(request),
+    )
+    return forecast_df, dispatch_results, rtc_range, active_segments
+
+
 def _forecast_for_request(
     request,
     active_segments: list,
@@ -148,29 +180,7 @@ def get_optimal_schedule(request: ScheduleRequest, db: Session = Depends(get_db)
     compliance floor (pass/fail), not the discharge target.
     """
     try:
-        active_segments = resolve_active_segments(
-            curtailment_enabled=request.curtailment_enabled,
-            curtailment_segments=_resolve_segments(request),
-            curtailment_start_block=request.curtailment_start_block,
-            curtailment_end_block=request.curtailment_end_block,
-        )
-        forecast_df = _forecast_for_request(
-            request,
-            active_segments,
-            upload_meta=_resolve_upload_meta(db, request.date),
-        )
-
-        dispatch_results = optimize_psp_dispatch(
-            forecast_df=forecast_df,
-            rtc_commitment=request.rtc_commitment_mw,
-            initial_soc=request.initial_soc_mwh,
-            prev_day_charge_schedule=request.prev_day_charge_schedule,
-            prev_charge_lots=request.prev_charge_lots,
-            global_block_offset=request.global_block_offset,
-            psp_discharge_segments=_resolve_psp_discharge_segments(request),
-            **_psp_params(request),
-        )
-
+        _, dispatch_results, _, _ = run_dispatch_pipeline(request, db)
         return dispatch_results
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Scheduling optimization failed: {str(e)}")
