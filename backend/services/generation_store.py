@@ -15,7 +15,12 @@ from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.orm import Session
 
 from db.models import GenerationInput, GenerationUploadMeta
-from services.constants import CONTRACT_END_DATE, CONTRACT_START_DATE, JULY_START_DATE
+from services.constants import (
+    CONTRACT_END_DATE,
+    CONTRACT_START_DATE,
+    JULY_END_DATE,
+    JULY_START_DATE,
+)
 from services.forecast import compute_scaled_solar_mw, get_power_for_wind_speed
 from services.persistence import GENERATION_UPLOAD_META_KEY, delete_state, get_state
 
@@ -588,13 +593,13 @@ def clear_july_generation_data(db: Session) -> int:
     result = db.execute(
         delete(GenerationInput).where(
             GenerationInput.date >= JULY_START_DATE,
-            GenerationInput.date <= CONTRACT_END_DATE,
+            GenerationInput.date <= JULY_END_DATE,
         )
     )
     db.execute(
         delete(GenerationUploadMeta).where(
             GenerationUploadMeta.date >= JULY_START_DATE,
-            GenerationUploadMeta.date <= CONTRACT_END_DATE,
+            GenerationUploadMeta.date <= JULY_END_DATE,
         )
     )
     db.commit()
