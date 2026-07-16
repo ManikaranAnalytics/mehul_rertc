@@ -323,11 +323,16 @@ export function OptimizerProvider({ children }: { children: React.ReactNode }) {
   const [multiDayGenEdits, setMultiDayGenEdits] = useState<Record<string, Record<number, GenEdit>>>({});
   const multiDayGenEditsRef = useRef<Record<string, Record<number, GenEdit>>>({});
   useEffect(() => { multiDayGenEditsRef.current = multiDayGenEdits; }, [multiDayGenEdits]);
+  // Upload metadata (solar_ac_mw + mode) keyed by date — used to scale solar overrides
+  const [genUploadMeta, setGenUploadMeta] = useState<Record<string, { solar_ac_mw: number; mode: string }>>({});
+  const genUploadMetaRef = useRef<Record<string, { solar_ac_mw: number; mode: string }>>();
+  useEffect(() => { genUploadMetaRef.current = genUploadMeta; }, [genUploadMeta]);
 
   // Load uploaded generation data from PostgreSQL for analysis tabs
   const refreshGenerationEdits = useCallback(async () => {
-    const { edits } = await fetchAllGenerationEdits();
+    const { edits, uploadMeta } = await fetchAllGenerationEdits();
     setMultiDayGenEdits(edits);
+    setGenUploadMeta(uploadMeta);
   }, []);
 
   useEffect(() => {
@@ -352,7 +357,7 @@ export function OptimizerProvider({ children }: { children: React.ReactNode }) {
     });
 
     const fromPg: Record<number, { wind_mw?: number; solar_mw?: number }> = {};
-    genEditsToBlockOverrides(multiDayGenEdits[selectedDate], wtgCount).forEach((ov) => {
+    genEditsToBlockOverrides(multiDayGenEdits[selectedDate], wtgCount, solarAc, genUploadMeta[selectedDate]).forEach((ov) => {
       fromPg[ov.block] = { wind_mw: ov.wind_mw, solar_mw: ov.solar_mw };
     });
 
@@ -367,7 +372,7 @@ export function OptimizerProvider({ children }: { children: React.ReactNode }) {
 
     const merged = { ...fromPg, ...fromLegacy, ...fromGenTable };
     return Object.entries(merged).map(([block, v]) => ({ block: parseInt(block), ...v }));
-  }, [blockOverrides, genTableEdits, multiDayGenEdits, selectedDate, wtgCount]);
+  }, [blockOverrides, genTableEdits, multiDayGenEdits, selectedDate, wtgCount, solarAc, genUploadMeta]);
 
   const buildScheduleRequest = useCallback(() => ({
     date: selectedDate,

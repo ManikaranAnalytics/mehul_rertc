@@ -76,9 +76,29 @@ export async function fetchAllGenerationEdits(): Promise<{
   return { edits: result, uploadMeta: body.upload_meta ?? {} };
 }
 
+/** Mirrors the backend `scale_stored_solar_mw` so the frontend can scale raw DB
+ *  solar values to the user-selected Solar Net Capacity before sending as overrides. */
+function scaleSolarMw(
+  stored: number,
+  solarAcMw: number,
+  meta?: { solar_ac_mw: number; mode: string },
+): number {
+  if (stored <= 0 || solarAcMw <= 0) return 0;
+  const mode = meta?.mode ?? 'absolute';
+  if (mode === 'reference') {
+    // Mirrors backend: base_solar * 0.9 * (solar_ac_mw / 175), capped at solar_ac_mw
+    return Math.min(stored * 0.9 * (solarAcMw / 175.0), solarAcMw);
+  }
+  // absolute: proportional ratio from upload-time capacity, capped at solarAcMw
+  const uploadAc = meta?.solar_ac_mw > 0 ? meta.solar_ac_mw : 60.0;
+  return Math.min(stored * (solarAcMw / uploadAc), solarAcMw);
+}
+
 export function genEditsToBlockOverrides(
   edits: Record<number, GenEdit> | undefined,
   wtgCount: number,
+  solarAcMw?: number,
+  uploadMeta?: { solar_ac_mw: number; mode: string },
 ): Array<{ block: number; wind_mw?: number; solar_mw?: number }> {
   if (!edits) return [];
   const overrides: Array<{ block: number; wind_mw?: number; solar_mw?: number }> = [];
@@ -91,7 +111,11 @@ export function genEditsToBlockOverrides(
     }
     if (edit.solar_mw !== undefined && edit.solar_mw !== '') {
       const sol = parseFloat(edit.solar_mw);
-      if (!isNaN(sol)) entry.solar_mw = sol;
+      if (!isNaN(sol)) {
+        entry.solar_mw = solarAcMw != null
+          ? scaleSolarMw(sol, solarAcMw, uploadMeta)
+          : sol;
+      }
     }
     if (entry.wind_mw !== undefined || entry.solar_mw !== undefined) {
       overrides.push(entry);

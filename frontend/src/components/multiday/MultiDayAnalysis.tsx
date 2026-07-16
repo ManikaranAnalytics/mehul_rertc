@@ -112,7 +112,7 @@ export default function MultiDayAnalysis() {
     const datesRun: string[] = [];
 
     try {
-      const { edits: generationEdits } = await fetchAllGenerationEdits();
+      const { edits: generationEdits, uploadMeta: generationUploadMeta } = await fetchAllGenerationEdits();
       const resolvedStart = startIndex >= 0 ? startIndex : 0;
 
       for (let i = 0; i < numDays; i++) {
@@ -138,7 +138,7 @@ export default function MultiDayAnalysis() {
             max_charge_mw: maxChargeMw,
             max_discharge_mw: maxDischargeMw,
             min_dispatch_mw: minDispatchMw,
-            block_overrides: genEditsToBlockOverrides(generationEdits[date], wtgCount),
+            block_overrides: genEditsToBlockOverrides(generationEdits[date], wtgCount, solarAc, generationUploadMeta[date]),
             initial_soc_mwh: currentSocMwh,
             prev_day_charge_schedule: prevChargeSchedule,
             prev_charge_lots: prevChargeLots,

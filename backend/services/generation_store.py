@@ -554,9 +554,14 @@ def block_overrides_from_db(
     db: Session,
     for_date: str,
     wtg_count: int,
+    solar_ac_mw: float = DEFAULT_SOLAR_AC_MW,
 ) -> list[dict[str, Any]]:
-    """Build schedule block_overrides from PostgreSQL generation_inputs (raw stored solar MW)."""
-    rows = get_generation_for_date(db, for_date)
+    """Build schedule block_overrides from PostgreSQL generation_inputs.
+
+    Solar MW is scaled to the requested solar_ac_mw using the stored upload
+    metadata (absolute ratio or 175 MW reference base).
+    """
+    rows = get_generation_for_date(db, for_date, solar_ac_mw=solar_ac_mw)
     if not any(r.get("has_upload") for r in rows):
         return []
 
@@ -570,7 +575,7 @@ def block_overrides_from_db(
         overrides.append({
             "block": int(row["block"]),
             "wind_mw": wind_mw,
-            "solar_mw": float(row["solar_mw"]),
+            "solar_mw": float(row["solar_mw"]),  # already scaled by get_generation_for_date
         })
     return overrides
 

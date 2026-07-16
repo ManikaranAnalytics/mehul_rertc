@@ -292,7 +292,7 @@ def get_multi_day_max_rtc(request: MultiDayMaxRTCRequest, db: Session = Depends(
                 request,
                 active_segments,
                 date=date,
-                block_overrides=block_overrides_from_db(db, date, request.wtg_count),
+                block_overrides=block_overrides_from_db(db, date, request.wtg_count, solar_ac_mw=request.solar_ac_mw),
                 upload_meta=_resolve_upload_meta(db, date),
             )
             for date in request.dates
