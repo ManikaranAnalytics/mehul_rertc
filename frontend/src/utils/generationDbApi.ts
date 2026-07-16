@@ -90,7 +90,7 @@ function scaleSolarMw(
     return Math.min(stored * 0.9 * (solarAcMw / 175.0), solarAcMw);
   }
   // absolute: proportional ratio from upload-time capacity, capped at solarAcMw
-  const uploadAc = meta?.solar_ac_mw > 0 ? meta.solar_ac_mw : 60.0;
+  const uploadAc = (meta?.solar_ac_mw ?? 0) > 0 ? (meta?.solar_ac_mw as number) : 60.0;
   return Math.min(stored * (solarAcMw / uploadAc), solarAcMw);
 }
 

@@ -325,7 +325,7 @@ export function OptimizerProvider({ children }: { children: React.ReactNode }) {
   useEffect(() => { multiDayGenEditsRef.current = multiDayGenEdits; }, [multiDayGenEdits]);
   // Upload metadata (solar_ac_mw + mode) keyed by date — used to scale solar overrides
   const [genUploadMeta, setGenUploadMeta] = useState<Record<string, { solar_ac_mw: number; mode: string }>>({});
-  const genUploadMetaRef = useRef<Record<string, { solar_ac_mw: number; mode: string }>>();
+  const genUploadMetaRef = useRef<Record<string, { solar_ac_mw: number; mode: string }>>({});
   useEffect(() => { genUploadMetaRef.current = genUploadMeta; }, [genUploadMeta]);
 
   // Load uploaded generation data from PostgreSQL for analysis tabs
