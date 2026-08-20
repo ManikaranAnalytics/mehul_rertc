@@ -24,7 +24,7 @@ export const JUNE_DATES = Array.from({ length: 30 }, (_, i) => {
 /** RTC contract window — generation page filters are capped at these dates */
 export const CONTRACT_START_DATE = '2026-06-01';
 const CONTRACT_YEAR = CONTRACT_START_DATE.slice(0, 4);
-export const CONTRACT_END_DATE = `${CONTRACT_YEAR}-12-31`;
+export const CONTRACT_END_DATE = '2027-03-31';
 export const JULY_START_DATE = `${CONTRACT_YEAR}-07-01`;
 export const JULY_END_DATE = `${CONTRACT_YEAR}-07-31`;
 

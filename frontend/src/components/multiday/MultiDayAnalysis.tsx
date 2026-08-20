@@ -94,7 +94,7 @@ export default function MultiDayAnalysis() {
   // Max selectable days from startDate
   const startIndex = CONTRACT_DATES.indexOf(startDate);
   const maxDays = startIndex >= 0
-    ? Math.min(30, CONTRACT_DATES.length - startIndex)
+    ? Math.max(1, CONTRACT_DATES.length - startIndex)
     : 1;
 
   const runAnalysis = useCallback(async () => {

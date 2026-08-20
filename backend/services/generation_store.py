@@ -158,16 +158,19 @@ def _parse_iso_date(value: str) -> date:
 
 
 def normalize_upload_date(value: str) -> str:
-    """Map assorted date formats to contract-year ISO dates (2026-MM-DD)."""
+    """Map assorted date formats to contract window ISO dates (2026-06-01 to 2027-03-31)."""
     raw = value.strip()
     if not raw:
         raise HTTPException(status_code=400, detail="Empty date value")
 
-    # ISO: 2024-06-01 or 2026-06-01
+    # ISO: 2024-06-01, 2026-06-01, or 2027-01-15
     if re.match(r"^\d{4}-\d{2}-\d{2}", raw):
         parsed = date.fromisoformat(raw[:10])
-        normalized = date(2026, parsed.month, parsed.day)
-        return normalized.isoformat()
+        if parsed.year < 2026:
+            target_year = 2026 if parsed.month >= 6 else 2027
+            normalized = date(target_year, parsed.month, parsed.day)
+            return normalized.isoformat()
+        return parsed.isoformat()
 
     # DD/MM/YY or DD/MM/YYYY or DD-MM-YY
     parts = re.split(r"[/\-]", raw)
@@ -178,15 +181,18 @@ def normalize_upload_date(value: str) -> str:
             year = int(parts[2])
             if year < 100:
                 year += 2000
-            # Historical files use 2024 — map day/month into contract year 2026
-            normalized = date(2026, month, day)
+            if year < 2026:
+                target_year = 2026 if month >= 6 else 2027
+                normalized = date(target_year, month, day)
+                return normalized.isoformat()
+            normalized = date(year, month, day)
             return normalized.isoformat()
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=f"Invalid date: {value}") from exc
 
     raise HTTPException(
         status_code=400,
-        detail=f"Invalid date: {value}. Use YYYY-MM-DD or DD/MM/YY (e.g. 2026-06-01 or 01/06/24).",
+        detail=f"Invalid date: {value}. Use YYYY-MM-DD or DD/MM/YY (e.g. 2026-06-01 or 15/01/27).",
     )
 
 
