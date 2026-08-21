@@ -13,7 +13,7 @@ except Exception as e:
 
 def get_power_for_wind_speed(speed: float) -> float:
     """Look up turbine power in kW for a given wind speed (m/s).
-    Wind speed → power curve lookup (Siemens Gamesa SG 3.15-114).
+    Wind speed → power curve lookup (Suzlon S144 3.0/3.15 MW).
     Cut-in: 3.0 m/s, Cut-out: 18.0 m/s.
     """
     rounded = round(speed, 1)

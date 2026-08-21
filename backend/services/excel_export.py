@@ -111,7 +111,7 @@ def _cfg(ws, date_str, wtg_count, solar_ac_mw, rtc, rtc_range,
         f"Auto: {int(min_compliance_ratio*100)}% of RTC — regulatory minimum")
     row(8,  "Wind Turbines (WTGs)  ✎",   wtg_count,
         "← EDIT THIS — active WTG count (1–59)",edit=True,fg="00D2FF",fmt="0")
-    row(9,  "WTG Unit Capacity (MW)",    3.15,"Siemens Gamesa SG 3.15-114 (fixed)")
+    row(9,  "WTG Unit Capacity (MW)",    3.15,"Suzlon S144 3.0/3.15 MW (fixed)")
     row(10, "Total Wind Capacity (MW)",  f"={WTG}*3.15","Auto from WTG count")
     row(11, "Solar AC Capacity (MW)  ✎", solar_ac_mw,
         "← EDIT THIS — AC-side net capacity (5–175 MW)",edit=True,fg="F59E0B",fmt="0.0")

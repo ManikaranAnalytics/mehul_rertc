@@ -443,7 +443,7 @@ export default function GenerationInputTable() {
       </div>
 
       <div className="generation-input-footer">
-        <span>Siemens Gamesa SG 3.15-114 · {wtgCount} WTGs · Cut-in 3 m/s · Rated 11 m/s · Cut-out 18 m/s</span>
+        <span>Suzlon S144 3.0/3.15 MW · {wtgCount} WTGs · Cut-in 3 m/s · Rated 11 m/s · Cut-out 18 m/s</span>
       </div>
     </section>
   );

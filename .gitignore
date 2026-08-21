@@ -27,3 +27,4 @@ Thumbs.db
 .pgdata/
 .tools/
 .git_push_worktree/
+.env
