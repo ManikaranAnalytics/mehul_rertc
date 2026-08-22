@@ -142,12 +142,8 @@ def scale_stored_solar_mw(
 
 
 def _apply_upload_wind_speed_correction(speed: float) -> float:
-    """One-time wind speed correction applied during CSV upload only (not at read/calc time)."""
-    if speed <= 3.0:
-        return speed
-    if speed <= 11.0:
-        return round(speed * 0.82, 4)
-    return round(speed * 0.96, 4)
+    """Direct passthrough: no artificial multiplier/correction factor applied during CSV upload."""
+    return round(speed, 4)
 
 
 def _parse_iso_date(value: str) -> date:
